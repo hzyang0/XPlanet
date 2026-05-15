@@ -1,0 +1,22 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: xplanet-canal-client
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: 6379
+
+rocketmq:
+  name-server: ${ROCKETMQ_NS:localhost:9876}
+  producer:
+    group: xplanet-canal-producer
+
+canal:
+  host: ${CANAL_HOST:localhost}
+  port: 11111
+  destination: example
+  username: ""
+  password: ""
+  subscribe: "xplanet\\.article"
