@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xplanet.article.mapper.ArticleMapper">
+
+    <update id="incrLikeCount">
+        UPDATE article
+        SET like_count = like_count + #{delta},
+            update_time = NOW()
+        WHERE id = #{articleId}
+          AND deleted = 0
+          <if test="delta &lt; 0">AND like_count + #{delta} &gt;= 0</if>
+    </update>
+
+</mapper>
