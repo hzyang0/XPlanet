@@ -1,0 +1,38 @@
+# Maven
+target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+hs_err_pid*
+
+# 本地配置 / 敏感
+*.local.yml
+*.local.properties
+application-local.yml
+.env
+.env.local
+
+# Docker volumes
+docker/data/
+
+# 私人面试清单 — 不要提交
+docs/INTERVIEW-CHECKLIST.md
+
+# Benchmark 结果保留模板,具体结果可选择性提交
