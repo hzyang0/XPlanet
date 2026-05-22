@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>XPlanet Demo</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Helvetica, sans-serif; max-width: 880px; margin: 32px auto; padding: 0 16px; color: #1f2328; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #6b7280; font-size: 13px; margin-bottom: 20px; }
+  .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  input, button { font-size: 14px; padding: 8px 10px; border-radius: 6px; border: 1px solid #d1d5db; }
+  button { background: #1f6feb; color: white; cursor: pointer; border: none; }
+  button:hover { background: #1858c4; }
+  button.danger { background: #d1242f; }
+  pre { background: #f6f8fa; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; }
+  .meta { color: #6b7280; font-size: 12px; }
+  .lat { color: #1a7f37; font-weight: 600; }
+  .tag { display: inline-block; padding: 2px 6px; background: #eef; color: #1f6feb; border-radius: 4px; font-size: 11px; margin-right: 4px; }
+</style>
+</head>
+<body>
+
+<h1>XPlanet Demo</h1>
+<div class="sub">用于演示二级缓存 / 一致性 / 限流降级 / 点赞削峰。请求经过 Gateway (默认 http://localhost:8080)。</div>
+
+<div class="card">
+  <div class="row">
+    <label>Gateway:</label>
+    <input id="base" value="http://localhost:8080" style="width: 240px"/>
+    <label>UserId:</label>
+    <input id="uid" value="1" style="width: 60px"/>
+    <label>ArticleId:</label>
+    <input id="aid" value="1" style="width: 60px"/>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <button onclick="loadDetail()">GET /api/article/{id}</button>
+    <button onclick="benchDetail()">连击 100 次(看 L1 命中)</button>
+    <button onclick="hotKey()">击穿热点 articleId=100(走 Sentinel 限流)</button>
+  </div>
+  <div id="detailMeta" class="meta" style="margin-top:8px"></div>
+  <pre id="detailOut">点击按钮调用接口</pre>
+</div>
+
+<div class="card">
+  <div class="row">
+    <button onclick="like()">POST /api/like/{id} 点赞</button>
+    <button class="danger" onclick="unlike()">DELETE /api/like/{id} 取消</button>
+    <button onclick="burst()">爆点 200 次(异步 MQ)</button>
+  </div>
+  <pre id="likeOut">点击按钮调用接口</pre>
+</div>
+
+<div class="card">
+  <div class="row">
+    <button onclick="updateArticle()">PUT 更新文章(触发双删 + Canal 兜底)</button>
+  </div>
+  <pre id="updOut">点击按钮调用接口</pre>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const base = () => $("base").value.replace(/\/$/, "");
+const uid  = () => $("uid").value;
+const aid  = () => $("aid").value;
+
+async function timed(fn) {
+  const t = performance.now();
+  const r = await fn();
+  return { ms: (performance.now() - t).toFixed(1), r };
+}
+
+async function loadDetail() {
+  const { ms, r } = await timed(async () => {
+    const res = await fetch(`${base()}/api/article/${aid()}`);
+    return res.json();
+  });
+  $("detailMeta").innerHTML = `耗时 <span class="lat">${ms} ms</span>(再点几次观察 L1 命中后的下降)`;
+  $("detailOut").textContent = JSON.stringify(r, null, 2);
+}
+
+async function benchDetail() {
+  const times = [];
+  for (let i = 0; i < 100; i++) {
+    const t = performance.now();
+    await fetch(`${base()}/api/article/${aid()}`);
+    times.push(performance.now() - t);
+  }
+  times.sort((a,b)=>a-b);
+  const p50 = times[Math.floor(times.length*0.5)].toFixed(1);
+  const p99 = times[Math.floor(times.length*0.99)].toFixed(1);
+  $("detailMeta").innerHTML = `100 次串行调用: P50 = <span class="lat">${p50} ms</span>, P99 = <span class="lat">${p99} ms</span>`;
+  $("detailOut").textContent = "前 5 次: " + times.slice(0,5).map(x=>x.toFixed(1)).join(", ") + "\n后 5 次: " + times.slice(-5).map(x=>x.toFixed(1)).join(", ");
+}
+
+async function hotKey() {
+  const out = [];
+  for (let i = 0; i < 60; i++) {
+    const res = await fetch(`${base()}/api/article/100`);
+    const j = await res.json();
+    out.push(`#${i+1} code=${j.code} msg=${j.msg}`);
+  }
+  $("detailOut").textContent = out.join("\n");
+}
+
+async function like() {
+  const res = await fetch(`${base()}/api/like/${aid()}`, {
+    method: "POST",
+    headers: { "X-User-Id": uid() }
+  });
+  $("likeOut").textContent = JSON.stringify(await res.json(), null, 2);
+}
+
+async function unlike() {
+  const res = await fetch(`${base()}/api/like/${aid()}`, {
+    method: "DELETE",
+    headers: { "X-User-Id": uid() }
+  });
+  $("likeOut").textContent = JSON.stringify(await res.json(), null, 2);
+}
+
+async function burst() {
+  const t = performance.now();
+  const tasks = [];
+  for (let i = 0; i < 200; i++) {
+    tasks.push(fetch(`${base()}/api/like/${aid()}`, {
+      method: "POST",
+      headers: { "X-User-Id": String(1000 + i) }
+    }));
+  }
+  await Promise.all(tasks);
+  $("likeOut").textContent = `200 并发请求完成,耗时 ${(performance.now() - t).toFixed(1)} ms。\n实际 DB 落库由消费者批量异步完成,稍后查看 article 表的 like_count。`;
+}
+
+async function updateArticle() {
+  const res = await fetch(`${base()}/api/article/${aid()}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-User-Id": uid() },
+    body: JSON.stringify({
+      title: "更新于 " + new Date().toLocaleTimeString(),
+      content: "刚刚更新过 — 应该看到 Redis 缓存被清,下次读会回源 + 回填",
+      tags: "demo"
+    })
+  });
+  $("updOut").textContent = JSON.stringify(await res.json(), null, 2) + "\n现在点上面的 GET 看是不是新内容。";
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,102 @@
+version: "3.8"
+
+# 基础设施一键起。
+# 用法: docker compose -f docker/docker-compose-infra.yml up -d
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: xp-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: xplanet
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./mysql.cnf:/etc/mysql/conf.d/binlog.cnf:ro
+      - ../sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ../sql/canal-user.sql:/docker-entrypoint-initdb.d/02-canal.sql:ro
+      - xp-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot123"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: xp-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - xp-redis-data:/data
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:4.9.7
+    container_name: xp-rmq-namesrv
+    restart: unless-stopped
+    ports:
+      - "9876:9876"
+    command: sh mqnamesrv
+
+  rocketmq-broker:
+    image: apache/rocketmq:4.9.7
+    container_name: xp-rmq-broker
+    restart: unless-stopped
+    depends_on:
+      - rocketmq-namesrv
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+    command: sh mqbroker -n rocketmq-namesrv:9876 --enable-proxy
+
+  canal:
+    image: canal/canal-server:v1.1.6
+    container_name: xp-canal
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "11111:11111"
+    environment:
+      canal.auto.scan: "false"
+      canal.destinations: example
+      canal.instance.master.address: mysql:3306
+      canal.instance.dbUsername: canal
+      canal.instance.dbPassword: canal123
+      canal.instance.connectionCharset: UTF-8
+      canal.instance.filter.regex: xplanet\\..*
+
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    container_name: xp-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: xp-grafana
+    restart: unless-stopped
+    ports:
+      # 宿主机 3100 → 容器 3000，避免与本机其它前端（如 Next 3000）冲突
+      - "3100:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - xp-grafana-data:/var/lib/grafana
+
+volumes:
+  xp-mysql-data:
+  xp-redis-data:
+  xp-grafana-data:

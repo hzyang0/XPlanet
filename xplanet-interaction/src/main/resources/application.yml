@@ -1,0 +1,25 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: xplanet-interaction
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: 6379
+    password: ${REDIS_PWD:}
+
+rocketmq:
+  name-server: ${ROCKETMQ_NS:localhost:9876}
+  producer:
+    group: xplanet-interaction-producer
+    send-message-timeout: 3000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}

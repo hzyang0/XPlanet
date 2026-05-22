@@ -1,0 +1,90 @@
+version: "3.8"
+
+# 应用服务一键起(前提:基础设施已起,docker-compose-infra.yml)
+# 用法: docker compose -f docker/docker-compose-app.yml up -d --build
+
+services:
+  article:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.app
+      args:
+        MODULE: xplanet-article
+    container_name: xp-article
+    restart: unless-stopped
+    environment:
+      MYSQL_HOST: host.docker.internal
+      REDIS_HOST: host.docker.internal
+      ROCKETMQ_NS: host.docker.internal:9876
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8081:8081"
+
+  interaction:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.app
+      args:
+        MODULE: xplanet-interaction
+    container_name: xp-interaction
+    restart: unless-stopped
+    environment:
+      REDIS_HOST: host.docker.internal
+      ROCKETMQ_NS: host.docker.internal:9876
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8082:8082"
+
+  user:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.app
+      args:
+        MODULE: xplanet-user
+    container_name: xp-user
+    restart: unless-stopped
+    environment:
+      MYSQL_HOST: host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8083:8083"
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.app
+      args:
+        MODULE: xplanet-gateway
+    container_name: xp-gateway
+    restart: unless-stopped
+    environment:
+      REDIS_HOST: host.docker.internal
+      ARTICLE_HOST: article
+      INTERACTION_HOST: interaction
+      USER_HOST: user
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - article
+      - interaction
+      - user
+
+  canal-client:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.app
+      args:
+        MODULE: xplanet-canal-client
+    container_name: xp-canal-client
+    restart: unless-stopped
+    environment:
+      CANAL_HOST: host.docker.internal
+      REDIS_HOST: host.docker.internal
+      ROCKETMQ_NS: host.docker.internal:9876
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
