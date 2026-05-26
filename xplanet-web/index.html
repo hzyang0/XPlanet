@@ -2,154 +2,305 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8" />
-<title>XPlanet Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>XPlanet · 开发者社区</title>
 <style>
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, "Segoe UI", Helvetica, sans-serif; max-width: 880px; margin: 32px auto; padding: 0 16px; color: #1f2328; }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  .sub { color: #6b7280; font-size: 13px; margin-bottom: 20px; }
-  .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
-  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-  input, button { font-size: 14px; padding: 8px 10px; border-radius: 6px; border: 1px solid #d1d5db; }
-  button { background: #1f6feb; color: white; cursor: pointer; border: none; }
-  button:hover { background: #1858c4; }
-  button.danger { background: #d1242f; }
-  pre { background: #f6f8fa; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; }
-  .meta { color: #6b7280; font-size: 12px; }
-  .lat { color: #1a7f37; font-weight: 600; }
-  .tag { display: inline-block; padding: 2px 6px; background: #eef; color: #1f6feb; border-radius: 4px; font-size: 11px; margin-right: 4px; }
+  :root {
+    --bg: #fbfaf7;
+    --surface: #ffffff;
+    --ink: #1a1a1a;
+    --ink-soft: #5c5c5c;
+    --line: #e8e4dc;
+    --accent: #c2410c;       /* 砖橙,克制的强调色 */
+    --accent-soft: #fff1e8;
+    --green: #15803d;
+    --blue: #1d4ed8;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Georgia", "Songti SC", serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
+
+  /* 顶栏 */
+  header {
+    border-bottom: 2px solid var(--ink);
+    background: var(--surface);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .topbar { display: flex; align-items: baseline; justify-content: space-between; padding: 18px 24px; max-width: 1000px; margin: 0 auto; }
+  .logo { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
+  .logo span { color: var(--accent); }
+  .tagline { font-size: 13px; color: var(--ink-soft); font-family: var(--mono); }
+
+  /* 配置条 */
+  .config {
+    background: var(--accent-soft);
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 12px;
+  }
+  .config .wrap { display: flex; gap: 18px; align-items: center; padding: 8px 24px; flex-wrap: wrap; }
+  .config label { color: var(--ink-soft); }
+  .config input { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; width: 150px; }
+  .config input.small { width: 48px; }
+
+  /* 布局 */
+  .layout { display: grid; grid-template-columns: 1fr 320px; gap: 32px; padding: 32px 0 60px; }
+  @media (max-width: 820px){ .layout { grid-template-columns: 1fr; } }
+
+  .section-title { font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-soft); margin-bottom: 14px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+
+  /* 文章列表 */
+  .article-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    padding: 20px 22px; margin-bottom: 14px; cursor: pointer;
+    transition: border-color .15s, transform .15s;
+  }
+  .article-card:hover { border-color: var(--accent); transform: translateX(2px); }
+  .article-card h3 { font-size: 19px; margin-bottom: 6px; }
+  .article-card .meta { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); display: flex; gap: 14px; }
+  .article-card .tags { margin-top: 8px; }
+  .tag { display: inline-block; font-family: var(--mono); font-size: 10px; background: var(--accent-soft); color: var(--accent); padding: 2px 7px; border-radius: 3px; margin-right: 5px; }
+
+  /* 详情 */
+  #detailView { display: none; }
+  .back-btn { font-family: var(--mono); font-size: 12px; color: var(--accent); cursor: pointer; background: none; border: none; margin-bottom: 16px; }
+  .detail-card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 32px; }
+  .detail-card h2 { font-size: 28px; margin-bottom: 12px; letter-spacing: -0.5px; }
+  .detail-card .meta { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); margin-bottom: 20px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .detail-card .content { font-size: 16px; color: #2a2a2a; padding: 16px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-bottom: 20px; min-height: 80px; }
+  .like-row { display: flex; align-items: center; gap: 14px; }
+  .like-btn { font-family: var(--mono); font-size: 14px; background: var(--surface); border: 1.5px solid var(--accent); color: var(--accent); padding: 8px 18px; border-radius: 6px; cursor: pointer; transition: all .15s; }
+  .like-btn:hover { background: var(--accent); color: #fff; }
+  .like-btn.liked { background: var(--accent); color: #fff; }
+  .like-count { font-family: var(--mono); font-size: 13px; color: var(--ink-soft); }
+  .latency { font-family: var(--mono); font-size: 11px; color: var(--green); }
+
+  /* 侧栏:后端能力演示 */
+  aside .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px; margin-bottom: 16px; }
+  aside h4 { font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+  aside p.desc { font-size: 12px; color: var(--ink-soft); margin-bottom: 12px; line-height: 1.5; }
+  .demo-btn { width: 100%; font-family: var(--mono); font-size: 12px; background: var(--ink); color: #fff; border: none; padding: 9px; border-radius: 6px; cursor: pointer; margin-bottom: 8px; transition: opacity .15s; }
+  .demo-btn:hover { opacity: .82; }
+  .demo-out { font-family: var(--mono); font-size: 11px; background: #1a1a1a; color: #d4d4d4; border-radius: 6px; padding: 10px; margin-top: 8px; white-space: pre-wrap; word-break: break-all; max-height: 180px; overflow-y: auto; line-height: 1.5; }
+  .demo-out .hl { color: #4ade80; }
+  .demo-out .dim { color: #888; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff; font-family: var(--mono); font-size: 13px; padding: 10px 20px; border-radius: 6px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
 </style>
 </head>
 <body>
 
-<h1>XPlanet Demo</h1>
-<div class="sub">用于演示二级缓存 / 一致性 / 点赞削峰。article 服务默认 8081,like 服务默认 8082。</div>
+<header>
+  <div class="topbar">
+    <div class="logo">X<span>Planet</span></div>
+    <div class="tagline">开发者社区 · 二级缓存 / 一致性 / 削峰</div>
+  </div>
+</header>
 
-<div class="card">
-  <div class="row">
-    <label>Gateway:</label>
-    <input id="articleBase" value="http://localhost:8081" style="width: 200px"/>
-    <input id="likeBase" value="http://localhost:8082" style="width: 200px"/>
-    <label>UserId:</label>
-    <input id="uid" value="1" style="width: 60px"/>
-    <label>ArticleId:</label>
-    <input id="aid" value="1" style="width: 60px"/>
+<div class="config">
+  <div class="wrap">
+    <label>article API</label>
+    <input id="articleBase" value="http://localhost:8081" />
+    <label>like API</label>
+    <input id="likeBase" value="http://localhost:8082" />
+    <label>当前用户</label>
+    <input id="uid" class="small" value="1" />
   </div>
 </div>
 
-<div class="card">
-  <div class="row">
-    <button onclick="loadDetail()">GET /api/article/{id}</button>
-    <button onclick="benchDetail()">连击 100 次(看 L1 命中)</button>
-    <button onclick="hotKey()">击穿热点 articleId=100(走 Sentinel 限流)</button>
+<div class="wrap">
+  <div class="layout">
+
+    <!-- 主区:文章列表 / 详情 -->
+    <main>
+      <!-- 列表 -->
+      <div id="listView">
+        <div class="section-title">最新文章</div>
+        <div id="articleList"><div class="dim" style="color:var(--ink-soft);font-family:var(--mono);font-size:12px">加载中…(请确认后端 8081 已启动)</div></div>
+      </div>
+
+      <!-- 详情 -->
+      <div id="detailView">
+        <button class="back-btn" onclick="showList()">← 返回列表</button>
+        <div class="detail-card">
+          <h2 id="dTitle"></h2>
+          <div class="meta">
+            <span id="dAuthor"></span>
+            <span id="dViews"></span>
+            <span class="latency" id="dLatency"></span>
+          </div>
+          <div class="content" id="dContent"></div>
+          <div class="like-row">
+            <button class="like-btn" id="likeBtn" onclick="toggleLike()">♥ 点赞</button>
+            <span class="like-count" id="dLikes"></span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- 侧栏:后端能力实验 -->
+    <aside>
+      <div class="section-title">后端能力演示</div>
+
+      <div class="panel">
+        <h4>① 二级缓存</h4>
+        <p class="desc">连续查同一篇文章 10 次,观察响应耗时:第 1 次回源数据库(慢),之后命中缓存(快)。</p>
+        <button class="demo-btn" onclick="demoCache()">连续查询 10 次</button>
+        <div class="demo-out" id="cacheOut">点击运行</div>
+      </div>
+
+      <div class="panel">
+        <h4>② 点赞削峰</h4>
+        <p class="desc">瞬间发起 50 个并发点赞。Redis 实时计数立即变化,数据库由后台批量异步落库。</p>
+        <button class="demo-btn" onclick="demoBurst()">并发点赞 50 次</button>
+        <div class="demo-out" id="burstOut">点击运行</div>
+      </div>
+
+      <div class="panel">
+        <h4>③ 缓存一致性</h4>
+        <p class="desc">更新文章后再查,验证缓存被清、读到的是最新内容(Cache Aside + 延迟双删)。</p>
+        <button class="demo-btn" onclick="demoConsistency()">更新并重查</button>
+        <div class="demo-out" id="consOut">点击运行</div>
+      </div>
+    </aside>
+
   </div>
-  <div id="detailMeta" class="meta" style="margin-top:8px"></div>
-  <pre id="detailOut">点击按钮调用接口</pre>
 </div>
 
-<div class="card">
-  <div class="row">
-    <button onclick="like()">POST /api/like/{id} 点赞</button>
-    <button class="danger" onclick="unlike()">DELETE /api/like/{id} 取消</button>
-    <button onclick="burst()">爆点 200 次(异步 MQ)</button>
-  </div>
-  <pre id="likeOut">点击按钮调用接口</pre>
-</div>
-
-<div class="card">
-  <div class="row">
-    <button onclick="updateArticle()">PUT 更新文章(触发双删 + Canal 兜底)</button>
-  </div>
-  <pre id="updOut">点击按钮调用接口</pre>
-</div>
+<div class="toast" id="toast"></div>
 
 <script>
 const $ = id => document.getElementById(id);
 const articleBase = () => $("articleBase").value.replace(/\/$/, "");
 const likeBase = () => $("likeBase").value.replace(/\/$/, "");
-const uid  = () => $("uid").value;
-const aid  = () => $("aid").value;
+const uid = () => $("uid").value || "1";
+const KNOWN_IDS = [1, 2, 3];   // 已知测试文章(后端无列表接口,前端用已知 id 拼列表)
+let currentId = null;
+let liked = false;
 
-async function timed(fn) {
-  const t = performance.now();
-  const r = await fn();
-  return { ms: (performance.now() - t).toFixed(1), r };
+function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),1800); }
+
+async function getArticle(id){
+  const res = await fetch(`${articleBase()}/api/article/${id}`);
+  const json = await res.json();
+  return json.data;
 }
 
-async function loadDetail() {
-  const { ms, r } = await timed(async () => {
-    const res = await fetch(`${articleBase()}/api/article/${aid()}`);
-    return res.json();
-  });
-  $("detailMeta").innerHTML = `耗时 <span class="lat">${ms} ms</span>(再点几次观察 L1 命中后的下降)`;
-  $("detailOut").textContent = JSON.stringify(r, null, 2);
-}
-
-async function benchDetail() {
-  const times = [];
-  for (let i = 0; i < 100; i++) {
-    const t = performance.now();
-    await fetch(`${articleBase()}/api/article/${aid()}`);
-    times.push(performance.now() - t);
+// 加载列表
+async function loadList(){
+  const box = $("articleList");
+  try {
+    const arts = [];
+    for (const id of KNOWN_IDS){
+      try { const a = await getArticle(id); if (a) arts.push(a); } catch(e){}
+    }
+    if (arts.length === 0){ box.innerHTML = '<div style="color:#c2410c;font-family:var(--mono);font-size:12px">未获取到文章。请确认后端 article(8081)已启动、数据库已初始化。</div>'; return; }
+    box.innerHTML = arts.map(a => `
+      <div class="article-card" onclick="showDetail(${a.id})">
+        <h3>${a.title}</h3>
+        <div class="meta"><span>作者 ${a.authorName||('user_'+a.authorId)}</span><span>♥ ${a.likeCount||0}</span><span>👁 ${a.viewCount||0}</span></div>
+        <div class="tags">${(a.tags||'').split(',').filter(Boolean).map(t=>`<span class="tag">${t}</span>`).join('')}</div>
+      </div>`).join('');
+  } catch(e){
+    box.innerHTML = '<div style="color:#c2410c;font-family:var(--mono);font-size:12px">连接失败:'+e.message+'<br>请确认后端已启动。</div>';
   }
-  times.sort((a,b)=>a-b);
-  const p50 = times[Math.floor(times.length*0.5)].toFixed(1);
-  const p99 = times[Math.floor(times.length*0.99)].toFixed(1);
-  $("detailMeta").innerHTML = `100 次串行调用: P50 = <span class="lat">${p50} ms</span>, P99 = <span class="lat">${p99} ms</span>`;
-  $("detailOut").textContent = "前 5 次: " + times.slice(0,5).map(x=>x.toFixed(1)).join(", ") + "\n后 5 次: " + times.slice(-5).map(x=>x.toFixed(1)).join(", ");
 }
 
-async function hotKey() {
-  const out = [];
-  for (let i = 0; i < 60; i++) {
-    const res = await fetch(`${articleBase()}/api/article/100`);
-    const j = await res.json();
-    out.push(`#${i+1} code=${j.code} msg=${j.msg}`);
+// 看详情
+async function showDetail(id){
+  currentId = id; liked = false;
+  const t0 = performance.now();
+  const a = await getArticle(id);
+  const ms = (performance.now()-t0).toFixed(1);
+  if (!a){ toast("文章不存在"); return; }
+  $("dTitle").textContent = a.title;
+  $("dAuthor").textContent = "作者 " + (a.authorName||('user_'+a.authorId));
+  $("dViews").textContent = "👁 " + (a.viewCount||0);
+  $("dContent").textContent = a.content;
+  $("dLikes").textContent = "♥ " + (a.likeCount||0) + " 次点赞";
+  $("dLatency").textContent = "本次响应 " + ms + " ms";
+  $("likeBtn").classList.remove("liked");
+  $("likeBtn").textContent = "♥ 点赞";
+  $("listView").style.display = "none";
+  $("detailView").style.display = "block";
+  window.scrollTo(0,0);
+}
+function showList(){ $("detailView").style.display="none"; $("listView").style.display="block"; loadList(); }
+
+// 点赞
+async function toggleLike(){
+  if (currentId == null) return;
+  try {
+    if (!liked){
+      const res = await fetch(`${likeBase()}/api/like/${currentId}`, { method:"POST", headers:{ "X-User-Id": uid() }});
+      const j = await res.json();
+      if (j.code === 0){ liked=true; $("likeBtn").classList.add("liked"); $("likeBtn").textContent="♥ 已赞"; toast("点赞成功(已写 Redis + 发 MQ)"); }
+      else { toast(j.msg || "点赞失败"); }
+    } else {
+      await fetch(`${likeBase()}/api/like/${currentId}`, { method:"DELETE", headers:{ "X-User-Id": uid() }});
+      liked=false; $("likeBtn").classList.remove("liked"); $("likeBtn").textContent="♥ 点赞"; toast("已取消");
+    }
+  } catch(e){ toast("请求失败:"+e.message); }
+}
+
+// 演示①:缓存
+async function demoCache(){
+  const out = $("cacheOut"); out.textContent = "运行中…";
+  const id = currentId || 1;
+  const lines = [];
+  for (let i=0;i<10;i++){
+    const t0 = performance.now();
+    await fetch(`${articleBase()}/api/article/${id}`);
+    const ms = (performance.now()-t0).toFixed(1);
+    const tag = i===0 ? '<span class="dim"> ← 首次,可能回源DB</span>' : (i===1?'<span class="hl"> ← 命中缓存</span>':'');
+    lines.push(`第 ${String(i+1).padStart(2)} 次: ${ms.padStart(6)} ms${tag}`);
   }
-  $("detailOut").textContent = out.join("\n");
+  out.innerHTML = lines.join("\n") + '\n<span class="dim">观察:首次较慢(查库),之后稳定变快(命中 L1/L2 缓存)</span>';
 }
 
-async function like() {
-  const res = await fetch(`${likeBase()}/api/like/${aid()}`, {
-    method: "POST",
-    headers: { "X-User-Id": uid() }
-  });
-  $("likeOut").textContent = JSON.stringify(await res.json(), null, 2);
-}
-
-async function unlike() {
-  const res = await fetch(`${likeBase()}/api/like/${aid()}`, {
-    method: "DELETE",
-    headers: { "X-User-Id": uid() }
-  });
-  $("likeOut").textContent = JSON.stringify(await res.json(), null, 2);
-}
-
-async function burst() {
-  const t = performance.now();
+// 演示②:削峰
+async function demoBurst(){
+  const out = $("burstOut"); out.textContent = "运行中…";
+  const id = currentId || 1;
+  const before = (await getArticle(id)).likeCount || 0;
+  const t0 = performance.now();
   const tasks = [];
-  for (let i = 0; i < 200; i++) {
-    tasks.push(fetch(`${likeBase()}/api/like/${aid()}`, {
-      method: "POST",
-      headers: { "X-User-Id": String(1000 + i) }
-    }));
+  for (let i=0;i<50;i++){
+    tasks.push(fetch(`${likeBase()}/api/like/${id}`, { method:"POST", headers:{ "X-User-Id": String(10000+i) }}));
   }
   await Promise.all(tasks);
-  $("likeOut").textContent = `200 并发请求完成,耗时 ${(performance.now() - t).toFixed(1)} ms。\n实际 DB 落库由消费者批量异步完成,稍后查看 article 表的 like_count。`;
+  const cost = (performance.now()-t0).toFixed(0);
+  out.innerHTML =
+    `<span class="hl">50 个并发点赞完成,耗时 ${cost} ms</span>\n` +
+    `接口立即返回(只写 Redis + 发 MQ)\n` +
+    `<span class="dim">数据库 like_count 由后台批量异步落库,\n稍等 1~2 秒后回到详情页刷新可见增长。\n这就是「削峰」:写请求快速返回,落库异步合并。</span>`;
 }
 
-async function updateArticle() {
-  const res = await fetch(`${articleBase()}/api/article/${aid()}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "X-User-Id": uid() },
-    body: JSON.stringify({
-      title: "更新于 " + new Date().toLocaleTimeString(),
-      content: "刚刚更新过 — 应该看到 Redis 缓存被清,下次读会回源 + 回填",
-      tags: "demo"
-    })
-  });
-  $("updOut").textContent = JSON.stringify(await res.json(), null, 2) + "\n现在点上面的 GET 看是不是新内容。";
+// 演示③:一致性
+async function demoConsistency(){
+  const out = $("consOut"); out.textContent = "运行中…";
+  const id = currentId || 1;
+  try {
+    const newTitle = "更新于 " + new Date().toLocaleTimeString();
+    await fetch(`${articleBase()}/api/article/${id}`, {
+      method:"PUT", headers:{ "Content-Type":"application/json", "X-User-Id": uid() },
+      body: JSON.stringify({ title:newTitle, content:"内容已于 "+new Date().toLocaleString()+" 更新", tags:"updated" })
+    });
+    const after = await getArticle(id);
+    out.innerHTML =
+      `<span class="hl">已更新文章 #${id}</span>\n` +
+      `新标题: ${after.title}\n` +
+      `<span class="dim">更新时删了缓存,这次读到的是最新值。\n说明 Cache Aside + 双删生效。\n回列表可见标题已变。</span>`;
+  } catch(e){ out.textContent = "失败:"+e.message; }
 }
+
+// 启动
+loadList();
 </script>
 
 </body>

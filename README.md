@@ -124,14 +124,13 @@ xplanet/
     └── benchmark-results.md
 ```
 
-## 已知取舍(面试可主动展开)
+## 取舍
 
 - 点赞消费用内存缓冲合并落库,实例崩溃会丢失未 flush 的增量;生产可改 Redis Stream 共享缓冲
 - 未接注册中心 / 配置中心,服务地址写在配置里
 - 单机 Redis,未做哨兵 / Cluster
 - authorName 在 article 内简化拼接,未真正走 user 服务
 
-这些是有意识的取舍,不是不知道,面试时可展开聊改造方案。
 
 ## License
 

@@ -53,4 +53,4 @@ INSERT INTO `article` (`id`, `author_id`, `title`, `content`, `tags`) VALUES
 (1, 1, 'Caffeine + Redis 二级缓存实战', '本文介绍如何构建抗热点的二级缓存架构...', 'cache,redis,caffeine'),
 (2, 1, 'RocketMQ 批量消费削峰',         '通过缓冲合并把同一文章的 N 次点赞合成 1 次 update...', 'mq,rocketmq'),
 (3, 2, 'Cache Aside 延迟双删全解析',    '为什么必须双删,以及第二删延迟到底设多少...', 'cache,consistency'),
-(100, 1, '【热点】秒杀场景的限流降级',   '这是一个被 Sentinel 规则标记为热点 key 的样例文章', 'sentinel,hotkey');
+(100, 1, '【热点】高并发缓存击穿应对',     '这是一篇模拟热点文章,用于演示缓存击穿时的分布式锁重建', 'cache,hotkey');
