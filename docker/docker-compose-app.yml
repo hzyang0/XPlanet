@@ -1,7 +1,13 @@
 version: "3.8"
 
-# 应用服务一键起(前提:基础设施已起,docker-compose-infra.yml)
+# 应用服务(全 Docker 模式)。前提:先起基础设施 docker-compose-infra.yml。
 # 用法: docker compose -f docker/docker-compose-app.yml up -d --build
+#
+# 本 compose 加入基础设施的网络,直接用服务名(mysql/redis/rocketmq-namesrv)互访,
+# 不再使用 host.docker.internal。
+#
+# 注:本地开发更推荐「混合模式」——中间件用 Docker,3 个服务用 IDE 跑,便于断点调试。
+#     全 Docker 模式适合演示 / 部署。
 
 services:
   article:
@@ -13,13 +19,13 @@ services:
     container_name: xp-article
     restart: unless-stopped
     environment:
-      MYSQL_HOST: host.docker.internal
-      REDIS_HOST: host.docker.internal
-      ROCKETMQ_NS: host.docker.internal:9876
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      MYSQL_HOST: mysql
+      REDIS_HOST: redis
+      ROCKETMQ_NS: rocketmq-namesrv:9876
     ports:
       - "8081:8081"
+    networks:
+      - xp-net
 
   interaction:
     build:
@@ -30,12 +36,12 @@ services:
     container_name: xp-interaction
     restart: unless-stopped
     environment:
-      REDIS_HOST: host.docker.internal
-      ROCKETMQ_NS: host.docker.internal:9876
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      REDIS_HOST: redis
+      ROCKETMQ_NS: rocketmq-namesrv:9876
     ports:
       - "8082:8082"
+    networks:
+      - xp-net
 
   user:
     build:
@@ -46,45 +52,15 @@ services:
     container_name: xp-user
     restart: unless-stopped
     environment:
-      MYSQL_HOST: host.docker.internal
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      MYSQL_HOST: mysql
     ports:
       - "8083:8083"
+    networks:
+      - xp-net
 
-  gateway:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.app
-      args:
-        MODULE: xplanet-gateway
-    container_name: xp-gateway
-    restart: unless-stopped
-    environment:
-      REDIS_HOST: host.docker.internal
-      ARTICLE_HOST: article
-      INTERACTION_HOST: interaction
-      USER_HOST: user
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "8080:8080"
-    depends_on:
-      - article
-      - interaction
-      - user
-
-  canal-client:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.app
-      args:
-        MODULE: xplanet-canal-client
-    container_name: xp-canal-client
-    restart: unless-stopped
-    environment:
-      CANAL_HOST: host.docker.internal
-      REDIS_HOST: host.docker.internal
-      ROCKETMQ_NS: host.docker.internal:9876
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+# 复用基础设施 compose 创建的网络(默认名为 docker_default,
+# 视你的 compose 项目名而定;可用 `docker network ls` 确认后修改)。
+networks:
+  xp-net:
+    external: true
+    name: docker_default

@@ -1,4 +1,4 @@
--- wrk -t8 -c500 -d30s -s benchmark/like.lua http://localhost:8080
+-- wrk -t8 -c500 -d30s -s benchmark/like.lua http://localhost:8082
 -- 模拟大量不同用户点赞同一篇热门文章
 math.randomseed(os.time())
 counter = 0

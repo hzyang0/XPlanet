@@ -1,7 +1,9 @@
 version: "3.8"
 
-# 基础设施一键起。
+# 基础设施一键起(本地混合模式:中间件用 Docker,应用用 IDE 跑)
 # 用法: docker compose -f docker/docker-compose-infra.yml up -d
+#
+# 含 MySQL / Redis / RocketMQ(namesrv + broker)。
 
 services:
   mysql:
@@ -15,9 +17,7 @@ services:
     ports:
       - "3306:3306"
     volumes:
-      - ./mysql.cnf:/etc/mysql/conf.d/binlog.cnf:ro
       - ../sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
-      - ../sql/canal-user.sql:/docker-entrypoint-initdb.d/02-canal.sql:ro
       - xp-mysql-data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot123"]
@@ -52,51 +52,12 @@ services:
     ports:
       - "10909:10909"
       - "10911:10911"
-    environment:
-      NAMESRV_ADDR: rocketmq-namesrv:9876
-    command: sh mqbroker -n rocketmq-namesrv:9876 --enable-proxy
-
-  canal:
-    image: canal/canal-server:v1.1.6
-    container_name: xp-canal
-    restart: unless-stopped
-    depends_on:
-      mysql:
-        condition: service_healthy
-    ports:
-      - "11111:11111"
-    environment:
-      canal.auto.scan: "false"
-      canal.destinations: example
-      canal.instance.master.address: mysql:3306
-      canal.instance.dbUsername: canal
-      canal.instance.dbPassword: canal123
-      canal.instance.connectionCharset: UTF-8
-      canal.instance.filter.regex: xplanet\\..*
-
-  prometheus:
-    image: prom/prometheus:v2.50.0
-    container_name: xp-prometheus
-    restart: unless-stopped
-    ports:
-      - "9090:9090"
+    # 关键:挂载 broker.conf 指定 brokerIP1,否则 broker 向 namesrv
+    # 注册的是容器内网 IP,本机应用拿到后连不上 → 发消息超时/收不到消息。
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-
-  grafana:
-    image: grafana/grafana:10.4.2
-    container_name: xp-grafana
-    restart: unless-stopped
-    ports:
-      # 宿主机 3100 → 容器 3000，避免与本机其它前端（如 Next 3000）冲突
-      - "3100:3000"
-    environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-    volumes:
-      - xp-grafana-data:/var/lib/grafana
+      - ./broker.conf:/home/rocketmq/rocketmq-4.9.7/conf/broker.conf:ro
+    command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/rocketmq-4.9.7/conf/broker.conf
 
 volumes:
   xp-mysql-data:
   xp-redis-data:
-  xp-grafana-data:

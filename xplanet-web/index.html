@@ -23,12 +23,13 @@
 <body>
 
 <h1>XPlanet Demo</h1>
-<div class="sub">用于演示二级缓存 / 一致性 / 限流降级 / 点赞削峰。请求经过 Gateway (默认 http://localhost:8080)。</div>
+<div class="sub">用于演示二级缓存 / 一致性 / 点赞削峰。article 服务默认 8081,like 服务默认 8082。</div>
 
 <div class="card">
   <div class="row">
     <label>Gateway:</label>
-    <input id="base" value="http://localhost:8080" style="width: 240px"/>
+    <input id="articleBase" value="http://localhost:8081" style="width: 200px"/>
+    <input id="likeBase" value="http://localhost:8082" style="width: 200px"/>
     <label>UserId:</label>
     <input id="uid" value="1" style="width: 60px"/>
     <label>ArticleId:</label>
@@ -64,7 +65,8 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const base = () => $("base").value.replace(/\/$/, "");
+const articleBase = () => $("articleBase").value.replace(/\/$/, "");
+const likeBase = () => $("likeBase").value.replace(/\/$/, "");
 const uid  = () => $("uid").value;
 const aid  = () => $("aid").value;
 
@@ -76,7 +78,7 @@ async function timed(fn) {
 
 async function loadDetail() {
   const { ms, r } = await timed(async () => {
-    const res = await fetch(`${base()}/api/article/${aid()}`);
+    const res = await fetch(`${articleBase()}/api/article/${aid()}`);
     return res.json();
   });
   $("detailMeta").innerHTML = `耗时 <span class="lat">${ms} ms</span>(再点几次观察 L1 命中后的下降)`;
@@ -87,7 +89,7 @@ async function benchDetail() {
   const times = [];
   for (let i = 0; i < 100; i++) {
     const t = performance.now();
-    await fetch(`${base()}/api/article/${aid()}`);
+    await fetch(`${articleBase()}/api/article/${aid()}`);
     times.push(performance.now() - t);
   }
   times.sort((a,b)=>a-b);
@@ -100,7 +102,7 @@ async function benchDetail() {
 async function hotKey() {
   const out = [];
   for (let i = 0; i < 60; i++) {
-    const res = await fetch(`${base()}/api/article/100`);
+    const res = await fetch(`${articleBase()}/api/article/100`);
     const j = await res.json();
     out.push(`#${i+1} code=${j.code} msg=${j.msg}`);
   }
@@ -108,7 +110,7 @@ async function hotKey() {
 }
 
 async function like() {
-  const res = await fetch(`${base()}/api/like/${aid()}`, {
+  const res = await fetch(`${likeBase()}/api/like/${aid()}`, {
     method: "POST",
     headers: { "X-User-Id": uid() }
   });
@@ -116,7 +118,7 @@ async function like() {
 }
 
 async function unlike() {
-  const res = await fetch(`${base()}/api/like/${aid()}`, {
+  const res = await fetch(`${likeBase()}/api/like/${aid()}`, {
     method: "DELETE",
     headers: { "X-User-Id": uid() }
   });
@@ -127,7 +129,7 @@ async function burst() {
   const t = performance.now();
   const tasks = [];
   for (let i = 0; i < 200; i++) {
-    tasks.push(fetch(`${base()}/api/like/${aid()}`, {
+    tasks.push(fetch(`${likeBase()}/api/like/${aid()}`, {
       method: "POST",
       headers: { "X-User-Id": String(1000 + i) }
     }));
@@ -137,7 +139,7 @@ async function burst() {
 }
 
 async function updateArticle() {
-  const res = await fetch(`${base()}/api/article/${aid()}`, {
+  const res = await fetch(`${articleBase()}/api/article/${aid()}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", "X-User-Id": uid() },
     body: JSON.stringify({

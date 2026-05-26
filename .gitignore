@@ -34,5 +34,13 @@ docker/data/
 
 # 私人面试清单 — 不要提交
 docs/INTERVIEW-CHECKLIST.md
+docs/adv-part1.md
+docs/adv-part2.md
+docs/XPlanet完全学习手册.md
+docs/XPlanet面试实战手册.md
 
 # Benchmark 结果保留模板,具体结果可选择性提交
+
+# 本地参考文档(阅读代码时用,不上传 GitHub)
+SLIM-AND-FIX.md
+UPLOAD-GUIDE.txt

@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  启动 XPlanet 依赖基础设施（MySQL / Redis / RocketMQ / Canal / Prometheus / Grafana）
+  启动 XPlanet 依赖基础设施（MySQL / Redis / RocketMQ）
 
 .DESCRIPTION
   需在仓库根目录执行，且已安装 Docker Desktop 并处于运行状态。

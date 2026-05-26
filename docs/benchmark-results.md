@@ -18,7 +18,7 @@
 
 ### 1.1 无缓存(对照组)
 ```
-wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8080
+wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8081
 # 把 ArticleServiceImpl.getDetail() 改成 return loadFromDb(articleId) 直接走 DB
 ```
 
@@ -51,7 +51,7 @@ wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8080
 ## 2. 点赞接口削峰
 
 ```
-wrk -t8 -c500 -d30s -s benchmark/like.lua http://localhost:8080
+wrk -t8 -c500 -d30s -s benchmark/like.lua http://localhost:8082
 ```
 ```
 (粘贴 wrk 结果)
@@ -63,10 +63,3 @@ wrk -t8 -c500 -d30s -s benchmark/like.lua http://localhost:8080
 | 接口 P99 | |
 | DB UPDATE QPS(同期) | |
 | 削峰比 | |
-
-## 3. 限流降级
-
-把 Sentinel 阈值改 5,压测后期望 95%+ 请求返回 5001。
-```
-(粘贴 wrk 结果)
-```

@@ -13,7 +13,7 @@ brew install wrk
 
 ```bash
 # 冷启动:第一次基本是回源(慢),之后 L1 + L2 命中
-wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8080
+wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8081
 ```
 
 期望结果(单机 article 实例, 8C16G):
@@ -29,26 +29,13 @@ wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8080
 ## 2. 点赞写入(测 MQ 削峰)
 
 ```bash
-wrk -t8 -c500 -d30s -s benchmark/like.lua http://localhost:8080
+wrk -t8 -c500 -d30s -s benchmark/like.lua http://localhost:8082
 ```
 
 期望:
 - 接口侧 QPS ~ 8k+(全异步,只写 Redis + 发 MQ)
 - DB 侧 article 表 UPDATE QPS 约 接口 QPS 的 1/5 ~ 1/10(批量合并效果)
 - 通过 Grafana 对比 `mysql_global_status_com_update` 与接口 QPS
-
-## 3. 限流降级验证
-
-把 Sentinel 阈值临时改成 5 QPS:
-```java
-// SentinelConfig.java
-rule.setCount(5);
-```
-重启 article 服务,然后:
-```bash
-wrk -t1 -c20 -d10s http://localhost:8081/api/article/1
-```
-应看到大量 `code: 5001, msg: "请求过于频繁,请稍后再试"` 响应。
 
 ## 记录数据
 

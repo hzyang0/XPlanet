@@ -1,4 +1,4 @@
--- wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8080
+-- wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8081
 -- 随机访问 article id 1~10,模拟真实热点分布
 math.randomseed(os.time())
 

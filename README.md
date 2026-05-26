@@ -1,173 +1,137 @@
 # XPlanet
 
-> High-concurrency developer community platform — 二级缓存 / 缓存一致性 / 削峰 / 限流降级 的工程实践。
+> 开发者社区平台 —— 聚焦「读多写多」高并发场景下的**二级缓存、缓存一致性、点赞削峰**三个核心问题的工程实践。
 
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.18-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## 项目简介
+## 项目定位
 
-XPlanet 是一个面向技术内容分享的社区平台,核心是**读多写多的高并发文章 / 互动场景**。
-项目工程化实现了:
+社区类应用的真实瓶颈在于:**文章详情读多写少(热点读)** 和 **点赞瞬时高并发(热点写)**。
+本项目不堆砌技术,只围绕这两个真实诉求做深:
 
-- **Caffeine + Redis 二级缓存**: 本地缓存挡住热点流量,Redis 兜住分布式
-- **Cache Aside + 延迟双删 + Canal**: 三层防线保证缓存与 DB 的最终一致
-- **RocketMQ 削峰**: 点赞写入异步化,消费端按文章聚合批量落库,削减 DB 写压力
-- **Sentinel 热点参数限流 + 降级**: 单文章独立流控,Redis 故障时降级返回
-- **Spring Cloud Gateway**: 入口层 IP 令牌桶 + TraceId 注入
-- **Prometheus + Grafana**: 端到端可观测性
+- **Caffeine + Redis 二级缓存**:本地缓存挡热点读、降 Redis 网络开销;分布式缓存兜住多实例
+- **Cache Aside + 延迟双删 + MQ 广播**:保证缓存与 DB 最终一致,并解决多实例本地缓存同步失效
+- **RocketMQ 削峰**:点赞写入异步化,消费端按文章聚合批量落库,削减 DB 写压力
+- **Redisson 分布式锁**:缓存击穿时串行化重建,只放一个线程回源
+
+> 刻意没有引入网关、注册中心、分布式事务、监控全家桶等——在这个业务规模下属于过度设计。
+> 工程的价值在于「按场景选型」,而不是技术数量。
 
 ## 架构
 
-详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+```
+              ┌──────────────┐   ┌──────────────┐   ┌──────────┐
+   前端演示页 ─┤ Article 8081 │   │Interaction   │   │ User     │
+              │ 文章+二级缓存 │   │  8082 点赞    │   │ 8083     │
+              └──────┬───────┘   └──────┬───────┘   └────┬─────┘
+                     │                  │                │
+            ┌────────┴──────────────────┴────────────────┘
+            │
+     ┌──────┴───────┐   ┌──────────┐   ┌─────────────┐
+     │ MySQL        │   │  Redis   │   │  RocketMQ   │
+     │ (主数据)      │   │(L2缓存+  │   │(点赞削峰 +   │
+     │              │   │ 锁+计数) │   │ L1广播失效) │
+     └──────────────┘   └──────────┘   └─────────────┘
+```
 
-```
-Gateway (8080) ──┬── Article    (8081)  ←── Canal Client ←── MySQL binlog
-                 ├── Interaction(8082)  
-                 └── User       (8083)
-                        │
-              Redis / RocketMQ / MySQL
-```
+详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
 ## 模块说明
 
-| 模块 | 职责 | 关键特性 |
-|---|---|---|
-| `xplanet-common` | 公共响应、异常、常量 | 全局异常处理、缓存 key 规范 |
-| `xplanet-api` | DTO / VO | 跨服务数据契约 |
-| `xplanet-article` | 文章服务 | **二级缓存、双删、Sentinel、批量消费** |
-| `xplanet-interaction` | 点赞服务 | **MQ 顺序消息、幂等、削峰** |
-| `xplanet-user` | 用户服务 | CRUD |
-| `xplanet-gateway` | 网关 | **Redis 令牌桶、TraceId** |
-| `xplanet-canal-client` | binlog 监听 | **缓存一致性兜底** |
-| `xplanet-web` | 演示前端 | 单 HTML,验证全流程 |
+| 模块 | 端口 | 职责 | 关键特性 |
+|---|---|---|---|
+| `xplanet-common` | - | 公共响应、异常、常量 | 全局异常处理、缓存 key 规范 |
+| `xplanet-api` | - | DTO / VO | 跨服务数据契约 |
+| `xplanet-article` | 8081 | 文章服务 | **二级缓存、延迟双删、批量消费点赞落库** |
+| `xplanet-interaction` | 8082 | 点赞服务 | **MQ 顺序消息、幂等、削峰** |
+| `xplanet-user` | 8083 | 用户服务 | CRUD |
 
-## 快速开始
+## 快速开始(本地混合模式)
 
-### 前置
+推荐:中间件用 Docker,3 个服务用 IDE / 命令行跑(便于断点调试)。
 
-- Docker / Docker Compose
-- (本机跑) JDK 17 + Maven 3.9+
-
-### Windows（PowerShell 一键）
-
-在仓库根目录 `xplanet/` 下依次执行（需已安装 **Docker Desktop**、**JDK 17**、**Maven 3.9+** 且均在 PATH）：
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force   # 若脚本被禁止执行，仅需一次
-cd D:\User\Desktop\project\xplanet   # 按你的实际路径修改
-.\scripts\setup-infra.ps1            # MySQL / Redis / RocketMQ / Canal / Prometheus / Grafana
-.\scripts\build.ps1                  # mvn clean package -DskipTests
-.\scripts\start-local.ps1            # 5 个 Spring Boot 各开新窗口
-```
-
-Grafana 本机地址为 **http://localhost:3100**（避免占用常见前端 3000 端口）。
-
-### 一键启动基础设施
+### 1. 启动中间件
 
 ```bash
 docker compose -f docker/docker-compose-infra.yml up -d
-# 等待 MySQL + Canal 健康 ~ 30s
+# 等待 MySQL healthy(约 20-30s)
 docker compose -f docker/docker-compose-infra.yml ps
 ```
 
-会启动:
-- MySQL 8.0 (3306) — 自动建库 + 测试数据
-- Redis 7        (6379)
-- RocketMQ      (9876 namesrv + 10911 broker)
-- Canal Server  (11111)
-- Prometheus    (9090)
-- Grafana       (3100→容器 3000, admin/admin)
+启动 MySQL(3306,自动建表+测试数据)、Redis(6379)、RocketMQ(namesrv 9876 + broker 10911)。
 
-### 启动应用
+### 2. 编译
 
 ```bash
-docker compose -f docker/docker-compose-app.yml up -d --build
+mvn -DskipTests clean install
 ```
 
-或本机直接跑(开 5 个终端):
+### 3. 启动 3 个服务
+
+IDEA 直接 Run:`ArticleApplication`(8081)、`InteractionApplication`(8082)、`UserApplication`(8083)。
+
+或命令行(Windows 可用 `scripts/start-local.ps1` 一键起):
 ```bash
-mvn -pl xplanet-article -am spring-boot:run
+mvn -pl xplanet-article     -am spring-boot:run
 mvn -pl xplanet-interaction -am spring-boot:run
-mvn -pl xplanet-user -am spring-boot:run
-mvn -pl xplanet-gateway -am spring-boot:run
-mvn -pl xplanet-canal-client -am spring-boot:run
+mvn -pl xplanet-user        -am spring-boot:run
 ```
 
-### 验证
-
-打开 `xplanet-web/index.html`,默认 Gateway 指向 `http://localhost:8080`。
+### 4. 验证
 
 ```bash
-# 获取文章详情(经过二级缓存)
-curl http://localhost:8080/api/article/1
+# 文章详情(走二级缓存)
+curl http://localhost:8081/api/article/1
 
 # 点赞(异步落库)
-curl -X POST -H "X-User-Id: 100" http://localhost:8080/api/like/1
+curl -X POST -H "X-User-Id: 100" http://localhost:8082/api/like/1
 
-# 更新文章(触发双删 + Canal 兜底)
+# 更新文章(触发延迟双删)
 curl -X PUT -H "Content-Type: application/json" -H "X-User-Id: 1" \
   -d '{"title":"new","content":"updated","tags":"demo"}' \
-  http://localhost:8080/api/article/1
+  http://localhost:8081/api/article/1
 ```
+
+或直接打开 `xplanet-web/index.html`(article 默认指向 8081,like 指向 8082)。
 
 ## 性能测试
 
-详见 [`benchmark/README.md`](benchmark/README.md) 与 [`docs/benchmark-results.md`](docs/benchmark-results.md)。
-
-请使用提供的 wrk 脚本自行压测并填入结果。**严禁在简历上引用未经自测的数字。**
-
-## 监控
-
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3100 (admin / admin)
-- 应用 metrics 端点: `http://localhost:<port>/actuator/prometheus`
-
-自定义指标:
-- `xplanet_article_cache_l1_hit_rate` — L1 命中率
-- `xplanet_article_cache_l1_size`      — L1 当前条目数
-- `http_server_requests_seconds`        — HTTP 接口耗时 P99 等
+见 [`benchmark/README.md`](benchmark/README.md) 与 [`docs/benchmark-results.md`](docs/benchmark-results.md)。
+请用 wrk 脚本自测并填入真实数据,不要引用未经验证的数字。
 
 ## 项目结构
 
 ```
 xplanet/
-├── pom.xml                          # 父 POM
-├── xplanet-common/                  # 公共
-├── xplanet-api/                     # 契约
-├── xplanet-article/                 # 文章服务 ★ 核心
-├── xplanet-interaction/             # 点赞服务 ★ 核心
-├── xplanet-user/                    # 用户服务
-├── xplanet-gateway/                 # 网关
-├── xplanet-canal-client/            # Canal 客户端
-├── xplanet-web/                     # 演示前端
-├── docker/                          # 部署
-│   ├── docker-compose-infra.yml
-│   ├── docker-compose-app.yml
+├── pom.xml
+├── xplanet-common/          # 公共
+├── xplanet-api/             # 契约
+├── xplanet-article/         # 文章服务 ★ 核心
+├── xplanet-interaction/     # 点赞服务 ★ 核心
+├── xplanet-user/            # 用户服务
+├── xplanet-web/             # 演示前端
+├── docker/
+│   ├── docker-compose-infra.yml   # 中间件(本地混合模式用这个)
+│   ├── docker-compose-app.yml     # 全 Docker 模式(可选)
 │   ├── Dockerfile.app
-│   ├── mysql.cnf                    # binlog 开启
-│   ├── canal-instance.properties
-│   └── prometheus.yml
-├── sql/
-│   ├── init.sql
-│   └── canal-user.sql
-├── benchmark/
-│   ├── article_detail.lua           # wrk 脚本
-│   ├── like.lua
-│   └── README.md
+│   └── broker.conf                # RocketMQ broker IP 配置
+├── sql/init.sql
+├── benchmark/               # wrk 压测脚本
 └── docs/
-    ├── ARCHITECTURE.md              # 深度架构文档
-    └── benchmark-results.md         # 压测结果(自填)
+    ├── ARCHITECTURE.md
+    └── benchmark-results.md
 ```
 
-## 路线图
+## 已知取舍(面试可主动展开)
 
-- [ ] 接入 Nacos 配置中心,Sentinel 规则动态推送
-- [ ] Redis 哨兵 / Cluster 模式
-- [ ] LikeMessageConsumer buffer 持久化(Redis Stream)
-- [ ] 接入 SkyWalking 分布式追踪
-- [ ] e2e 集成测试
+- 点赞消费用内存缓冲合并落库,实例崩溃会丢失未 flush 的增量;生产可改 Redis Stream 共享缓冲
+- 未接注册中心 / 配置中心,服务地址写在配置里
+- 单机 Redis,未做哨兵 / Cluster
+- authorName 在 article 内简化拼接,未真正走 user 服务
+
+这些是有意识的取舍,不是不知道,面试时可展开聊改造方案。
 
 ## License
 

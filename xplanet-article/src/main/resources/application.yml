@@ -24,11 +24,6 @@ spring:
     host: ${REDIS_HOST:localhost}
     port: 6379
     password: ${REDIS_PWD:}
-    lettuce:
-      pool:
-        max-active: 50
-        max-idle: 20
-        min-idle: 5
 
 rocketmq:
   name-server: ${ROCKETMQ_NS:localhost:9876}
@@ -51,13 +46,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics
+        include: health,info
   endpoint:
     health:
       show-details: always
-  metrics:
-    tags:
-      application: ${spring.application.name}
 
 logging:
   level:

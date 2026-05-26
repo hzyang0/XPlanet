@@ -96,19 +96,22 @@ public class LikeMessageConsumer implements RocketMQListener<MessageExt> {
 
     @Override
     public void onMessage(MessageExt message) {
+        String idemKey = null;
         try {
             byte[] body = message.getBody();
             LikeMessage msg = com.xplanet.common.util.JsonUtil.fromJson(new String(body), LikeMessage.class);
 
-            // 幂等
-            String idemKey = "xp:mq:like:idem:" + msg.getActionId();
+            // 消费幂等:同一 actionId 只处理一次,防止 MQ 重投导致重复计数
+            idemKey = "xp:mq:like:idem:" + msg.getActionId();
             Boolean first = redis.opsForValue().setIfAbsent(idemKey, "1", 10, TimeUnit.MINUTES);
             if (!Boolean.TRUE.equals(first)) {
                 log.debug("duplicate like msg, drop. actionId={}", msg.getActionId());
                 return;
             }
 
-            // 缓冲
+            // 累加到内存缓冲,按 articleId 合并,由定时/阈值触发批量落库
+            // 注意:内存缓冲在实例崩溃时会丢失尚未 flush 的增量,这是当前实现的已知取舍。
+            // 生产可改为 Redis Hash 共享缓冲(实例间可接管)或落库后再标记幂等。
             buffer.computeIfAbsent(msg.getArticleId(), k -> new AtomicLong())
                     .addAndGet(msg.getDelta());
             long c = bufferedCount.incrementAndGet();
@@ -116,9 +119,12 @@ public class LikeMessageConsumer implements RocketMQListener<MessageExt> {
                 flush();
             }
         } catch (Exception e) {
-            // 故意抛出: 让 MQ 重试; 但幂等键已经写了,需要清掉避免误丢
+            // 处理失败时删掉幂等键,让 MQ 重投的消息不会被误判为「重复」而丢弃
+            if (idemKey != null) {
+                try { redis.delete(idemKey); } catch (Exception ignore) {}
+            }
             log.error("consume like msg failed", e);
-            throw e;
+            throw e; // 抛出触发 MQ 重试
         }
     }
 

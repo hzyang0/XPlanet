@@ -4,6 +4,7 @@ import com.xplanet.api.dto.ArticleChangeMessage;
 import com.xplanet.api.request.ArticlePublishRequest;
 import com.xplanet.api.vo.ArticleDetailVO;
 import com.xplanet.article.cache.ArticleCacheManager;
+import com.xplanet.article.cache.CacheDelayTask;
 import com.xplanet.article.entity.Article;
 import com.xplanet.article.mapper.ArticleMapper;
 import com.xplanet.article.service.ArticleService;
@@ -14,35 +15,36 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.beans.BeanUtils;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 
 /**
  * 文章服务实现。
  *
- * <h3>缓存一致性策略(Cache Aside + 延迟双删 + Canal 兜底)</h3>
+ * <h3>缓存一致性策略:Cache Aside + 延迟双删 + MQ 广播</h3>
  *
  * <pre>
  * 写流程:
- *   1) DB 更新(事务内)
- *   2) 立即删 L1+L2 缓存
- *   3) 发 MQ 消息(本节点 invalidate 已完成,但其他实例 L1 还在 → MQ 广播让其他实例清 L1)
- *   4) 异步延迟 1s 再删一次 Redis(防止"读旧 → 写新 → 读旧的线程把旧值写回缓存"竞态)
- *
- * 兜底:
- *   Canal 监听 MySQL binlog,任何漏发的写操作都会被捕获并清缓存,
- *   保证最终一致性不依赖业务代码的正确性。
+ *   1) 事务内更新 DB
+ *   2) 删 L1 + L2 缓存(第一删)
+ *   3) 事务提交后:
+ *      - 发 MQ 广播消息,通知其他实例清各自的 L1 本地缓存
+ *      - 触发异步延迟第二删,杀掉「读旧值线程在第一删后又写回缓存」的竞态
  * </pre>
  *
- * <h3>为什么需要 Canal 兜底?</h3>
- * <p>双删依赖业务代码"先更新 DB 再删缓存"必须完整执行。一旦:
- * 1) 业务代码漏写了删缓存(比如新人改代码);
- * 2) DDL 操作绕过应用直接改 DB;
- * 3) 后台脚本批量修改数据;
- * 这些场景下应用层双删失效。Canal 订阅 binlog 是最后一道防线。
+ * <h3>几个关键设计点</h3>
+ * <ul>
+ *   <li><b>为什么删缓存而不是更新缓存</b>:并发写下更新缓存会脏;且写少读多时更新缓存浪费。</li>
+ *   <li><b>为什么要第二删</b>:防止 T1(读 miss → 查到旧值)与 T2(写 + 删缓存)交叉时,
+ *       T1 把旧值写回缓存。延迟 1s 再删一次可覆盖该窗口。</li>
+ *   <li><b>为什么放在事务提交后</b>:若在事务内删缓存/发 MQ,事务尚未提交时其他请求回源会读到旧数据;
+ *       且第二删的 sleep 若在事务内会拉长事务、占用连接。用事务同步回调保证提交后执行。</li>
+ *   <li><b>多实例 L1 一致</b>:L1 是进程内 Caffeine,靠 MQ 广播(BROADCASTING)让每个实例都清自己的 L1。</li>
+ * </ul>
  */
 @Slf4j
 @Service
@@ -52,6 +54,7 @@ public class ArticleServiceImpl implements ArticleService {
     private final ArticleMapper articleMapper;
     private final ArticleCacheManager cacheManager;
     private final RocketMQTemplate rocketMQTemplate;
+    private final CacheDelayTask cacheDelayTask;
 
     @Override
     public ArticleDetailVO getDetail(Long articleId) {
@@ -100,8 +103,10 @@ public class ArticleServiceImpl implements ArticleService {
         exist.setUpdateTime(LocalDateTime.now());
         articleMapper.updateById(exist);
 
-        // 双删第一删 + 广播 MQ + 异步延迟二删
-        afterMutation(articleId, "UPDATE");
+        // 第一删(事务内,先让本节点缓存失效)
+        cacheManager.invalidate(articleId);
+        // 第二删 + 广播延迟到事务提交后
+        afterCommit(articleId, "UPDATE");
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -115,36 +120,38 @@ public class ArticleServiceImpl implements ArticleService {
             throw new BizException(ErrorCode.PARAM_INVALID);
         }
         articleMapper.deleteById(articleId);
-        afterMutation(articleId, "DELETE");
+        cacheManager.invalidate(articleId);
+        afterCommit(articleId, "DELETE");
     }
 
     /**
-     * 写后处理: 本地 + Redis 删除 + MQ 广播 + 异步二删。
+     * 注册事务提交后的回调:发 MQ 广播 + 触发异步延迟第二删。
+     * <p>用事务同步保证这些动作只在数据库真正提交后执行,避免读到未提交数据,
+     * 也避免把异步任务的耗时算进事务。
      */
-    private void afterMutation(Long articleId, String op) {
-        cacheManager.invalidate(articleId);
+    private void afterCommit(Long articleId, String op) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    publishAndSecondDelete(articleId, op);
+                }
+            });
+        } else {
+            // 无事务上下文(理论上不会发生,兜底)
+            publishAndSecondDelete(articleId, op);
+        }
+    }
+
+    private void publishAndSecondDelete(Long articleId, String op) {
         ArticleChangeMessage msg = ArticleChangeMessage.builder()
                 .articleId(articleId)
                 .op(op)
                 .timestamp(System.currentTimeMillis())
                 .build();
         rocketMQTemplate.convertAndSend(MqTopics.TOPIC_ARTICLE_CHANGE, msg);
-        delayedSecondDelete(articleId);
-    }
-
-    /**
-     * 延迟双删第二删。
-     * 用 Async 简单实现; 生产建议用 RocketMQ 的延迟消息(message.setDelayTimeLevel(2)对应 5s)。
-     */
-    @Async("cacheTaskExecutor")
-    public void delayedSecondDelete(Long articleId) {
-        try {
-            Thread.sleep(1000);
-            cacheManager.invalidate(articleId);
-            log.debug("second-delete done for articleId={}", articleId);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        // 跨 Bean 调用,@Async 生效,真正异步执行
+        cacheDelayTask.secondDelete(articleId);
     }
 
     /** 回源 DB,返回 VO(避免 entity 直接暴露) */
@@ -153,7 +160,7 @@ public class ArticleServiceImpl implements ArticleService {
         if (a == null || a.getDeleted() != 0) return null;
         ArticleDetailVO vo = new ArticleDetailVO();
         BeanUtils.copyProperties(a, vo);
-        // authorName 实际应该走 user 服务获取,这里 demo 简化
+        // authorName 实际应走 user 服务获取,这里 demo 简化
         vo.setAuthorName("user_" + a.getAuthorId());
         return vo;
     }
