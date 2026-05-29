@@ -108,8 +108,11 @@
     <input id="articleBase" value="http://localhost:8081" />
     <label>like API</label>
     <input id="likeBase" value="http://localhost:8082" />
-    <label>当前用户</label>
-    <input id="uid" class="small" value="1" />
+    <input id="userBase" type="hidden" value="http://localhost:8083" />
+    <label>登录</label>
+    <input id="loginUser" class="small" value="alice" style="width:70px" placeholder="用户名"/>
+    <button class="like-btn" style="padding:3px 10px;font-size:12px" onclick="doLogin()">登录</button>
+    <span id="loginState" style="font-family:var(--mono);font-size:11px;color:var(--ink-soft)">未登录</span>
   </div>
 </div>
 
@@ -120,6 +123,9 @@
     <main>
       <!-- 列表 -->
       <div id="listView">
+        <div class="section-title">🔥 热门</div>
+        <div id="hotList" style="margin-bottom:24px"><div style="color:var(--ink-soft);font-family:var(--mono);font-size:12px">加载中…</div></div>
+
         <div class="section-title">最新文章</div>
         <div id="articleList"><div class="dim" style="color:var(--ink-soft);font-family:var(--mono);font-size:12px">加载中…(请确认后端 8081 已启动)</div></div>
       </div>
@@ -139,6 +145,16 @@
             <button class="like-btn" id="likeBtn" onclick="toggleLike()">♥ 点赞</button>
             <span class="like-count" id="dLikes"></span>
           </div>
+        </div>
+
+        <!-- 评论区 -->
+        <div class="detail-card" style="margin-top:16px">
+          <div class="section-title">评论</div>
+          <div style="display:flex;gap:8px;margin-bottom:16px">
+            <input id="commentInput" placeholder="写下你的评论…" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-family:inherit"/>
+            <button class="like-btn" onclick="postComment()">发布</button>
+          </div>
+          <div id="commentList"></div>
         </div>
       </div>
     </main>
@@ -178,8 +194,34 @@
 const $ = id => document.getElementById(id);
 const articleBase = () => $("articleBase").value.replace(/\/$/, "");
 const likeBase = () => $("likeBase").value.replace(/\/$/, "");
-const uid = () => $("uid").value || "1";
-const KNOWN_IDS = [1, 2, 3];   // 已知测试文章(后端无列表接口,前端用已知 id 拼列表)
+const uid = () => $("uid") ? $("uid").value : "1";
+let TOKEN = null;
+async function doLogin(){
+  const username = $("loginUser").value.trim();
+  if (!username){ toast("请输入用户名"); return; }
+  try {
+    const res = await fetch(`${userBase()}/api/user/login`, {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ username })
+    });
+    const j = await res.json();
+    if (j.code === 0 && j.data && j.data.token){
+      TOKEN = j.data.token;
+      $("loginState").textContent = "已登录: " + (j.data.nickname || username);
+      $("loginState").style.color = "var(--green)";
+      toast("登录成功");
+    } else {
+      toast(j.msg || "登录失败");
+    }
+  } catch(e){ toast("登录失败:"+e.message); }
+}
+// 写操作的鉴权头
+function authHeaders(extra){
+  const h = extra || {};
+  if (TOKEN) h["Authorization"] = "Bearer " + TOKEN;
+  return h;
+}
+const userBase = () => ($("userBase") ? $("userBase").value : "http://localhost:8083").replace(/\/$/, "");
 let currentId = null;
 let liked = false;
 
@@ -191,21 +233,31 @@ async function getArticle(id){
   return json.data;
 }
 
-// 加载列表
-async function loadList(){
+// 加载列表(真实分页接口)
+let curPage = 1;
+async function loadList(page){
+  curPage = page || 1;
   const box = $("articleList");
   try {
-    const arts = [];
-    for (const id of KNOWN_IDS){
-      try { const a = await getArticle(id); if (a) arts.push(a); } catch(e){}
+    const res = await fetch(`${articleBase()}/api/article/list?pageNum=${curPage}&pageSize=10`);
+    const json = await res.json();
+    const pg = json.data;
+    if (!pg || !pg.records || pg.records.length === 0){
+      box.innerHTML = '<div style="color:#c2410c;font-family:var(--mono);font-size:12px">暂无文章。请确认后端 article(8081)已启动、数据库已初始化。</div>';
+      return;
     }
-    if (arts.length === 0){ box.innerHTML = '<div style="color:#c2410c;font-family:var(--mono);font-size:12px">未获取到文章。请确认后端 article(8081)已启动、数据库已初始化。</div>'; return; }
-    box.innerHTML = arts.map(a => `
+    box.innerHTML = pg.records.map(a => `
       <div class="article-card" onclick="showDetail(${a.id})">
         <h3>${a.title}</h3>
-        <div class="meta"><span>作者 ${a.authorName||('user_'+a.authorId)}</span><span>♥ ${a.likeCount||0}</span><span>👁 ${a.viewCount||0}</span></div>
+        <div class="meta"><span>作者 ${a.authorName||('用户'+a.authorId)}</span><span>♥ ${a.likeCount||0}</span><span>👁 ${a.viewCount||0}</span></div>
+        <div style="font-size:14px;color:#5c5c5c;margin-top:6px">${a.summary||''}</div>
         <div class="tags">${(a.tags||'').split(',').filter(Boolean).map(t=>`<span class="tag">${t}</span>`).join('')}</div>
-      </div>`).join('');
+      </div>`).join('')
+      + `<div style="display:flex;gap:10px;align-items:center;justify-content:center;margin-top:16px;font-family:var(--mono);font-size:12px">
+           <button class="demo-btn" style="width:auto;padding:6px 14px" onclick="loadList(${curPage-1})" ${curPage<=1?'disabled':''}>上一页</button>
+           <span>第 ${pg.pageNum} / ${pg.pages} 页 · 共 ${pg.total} 篇</span>
+           <button class="demo-btn" style="width:auto;padding:6px 14px" onclick="loadList(${curPage+1})" ${curPage>=pg.pages?'disabled':''}>下一页</button>
+         </div>`;
   } catch(e){
     box.innerHTML = '<div style="color:#c2410c;font-family:var(--mono);font-size:12px">连接失败:'+e.message+'<br>请确认后端已启动。</div>';
   }
@@ -229,7 +281,48 @@ async function showDetail(id){
   $("listView").style.display = "none";
   $("detailView").style.display = "block";
   window.scrollTo(0,0);
+  loadComments(id);
 }
+
+// 评论:加载列表(两级嵌套)
+async function loadComments(articleId){
+  const box = $("commentList");
+  try {
+    const res = await fetch(`${articleBase()}/api/comment/article/${articleId}`);
+    const json = await res.json();
+    const list = json.data || [];
+    if (list.length === 0){ box.innerHTML = '<div style="color:#999;font-size:13px">还没有评论,来抢沙发</div>'; return; }
+    box.innerHTML = list.map(c => renderComment(c, false)).join('');
+  } catch(e){ box.innerHTML = '<div style="color:#999;font-size:13px">评论加载失败</div>'; }
+}
+function renderComment(c, isChild){
+  const children = (c.children||[]).map(ch => renderComment(ch, true)).join('');
+  return `<div style="padding:10px 0;${isChild?'margin-left:24px;border-left:2px solid var(--line);padding-left:12px':'border-bottom:1px solid var(--line)'}">
+    <div style="font-size:13px"><b>${c.userName||('用户'+c.userId)}</b>
+      <span style="color:#999;font-family:var(--mono);font-size:11px"> · ${(c.createTime||'').replace('T',' ').slice(0,16)}</span></div>
+    <div style="font-size:14px;margin:4px 0">${c.content}</div>
+    ${!isChild?`<button onclick="replyTo(${c.id})" style="font-size:11px;color:var(--accent);background:none;border:none;cursor:pointer;font-family:var(--mono)">回复</button>`:''}
+    ${children}
+  </div>`;
+}
+let replyParentId = 0;
+function replyTo(pid){ replyParentId = pid; $("commentInput").focus(); $("commentInput").placeholder = "回复中…(再次点发布提交)"; }
+async function postComment(){
+  if (currentId == null) return;
+  const content = $("commentInput").value.trim();
+  if (!content){ toast("评论不能为空"); return; }
+  try {
+    await fetch(`${articleBase()}/api/comment`, {
+      method:"POST", headers:authHeaders({ "Content-Type":"application/json" }),
+      body: JSON.stringify({ articleId: currentId, parentId: replyParentId, content })
+    });
+    $("commentInput").value = ""; $("commentInput").placeholder = "写下你的评论…";
+    replyParentId = 0;
+    toast("评论成功");
+    loadComments(currentId);
+  } catch(e){ toast("评论失败:"+e.message); }
+}
+
 function showList(){ $("detailView").style.display="none"; $("listView").style.display="block"; loadList(); }
 
 // 点赞
@@ -237,12 +330,12 @@ async function toggleLike(){
   if (currentId == null) return;
   try {
     if (!liked){
-      const res = await fetch(`${likeBase()}/api/like/${currentId}`, { method:"POST", headers:{ "X-User-Id": uid() }});
+      const res = await fetch(`${likeBase()}/api/like/${currentId}`, { method:"POST", headers:authHeaders()});
       const j = await res.json();
       if (j.code === 0){ liked=true; $("likeBtn").classList.add("liked"); $("likeBtn").textContent="♥ 已赞"; toast("点赞成功(已写 Redis + 发 MQ)"); }
       else { toast(j.msg || "点赞失败"); }
     } else {
-      await fetch(`${likeBase()}/api/like/${currentId}`, { method:"DELETE", headers:{ "X-User-Id": uid() }});
+      await fetch(`${likeBase()}/api/like/${currentId}`, { method:"DELETE", headers:authHeaders()});
       liked=false; $("likeBtn").classList.remove("liked"); $("likeBtn").textContent="♥ 点赞"; toast("已取消");
     }
   } catch(e){ toast("请求失败:"+e.message); }
@@ -271,7 +364,7 @@ async function demoBurst(){
   const t0 = performance.now();
   const tasks = [];
   for (let i=0;i<50;i++){
-    tasks.push(fetch(`${likeBase()}/api/like/${id}`, { method:"POST", headers:{ "X-User-Id": String(10000+i) }}));
+    tasks.push(fetch(`${likeBase()}/api/like/${id}`, { method:"POST", headers:authHeaders()}));
   }
   await Promise.all(tasks);
   const cost = (performance.now()-t0).toFixed(0);
@@ -288,7 +381,7 @@ async function demoConsistency(){
   try {
     const newTitle = "更新于 " + new Date().toLocaleTimeString();
     await fetch(`${articleBase()}/api/article/${id}`, {
-      method:"PUT", headers:{ "Content-Type":"application/json", "X-User-Id": uid() },
+      method:"PUT", headers:authHeaders({ "Content-Type":"application/json" }),
       body: JSON.stringify({ title:newTitle, content:"内容已于 "+new Date().toLocaleString()+" 更新", tags:"updated" })
     });
     const after = await getArticle(id);
@@ -299,8 +392,27 @@ async function demoConsistency(){
   } catch(e){ out.textContent = "失败:"+e.message; }
 }
 
+async function loadHot(){
+  const box = $("hotList");
+  try {
+    const res = await fetch(`${articleBase()}/api/article/hot?limit=5`);
+    const json = await res.json();
+    const list = json.data || [];
+    if (list.length === 0){ box.innerHTML = '<div style="color:var(--ink-soft);font-family:var(--mono);font-size:12px">暂无热门(等定时任务刷新,约 1 分钟)</div>'; return; }
+    box.innerHTML = list.map((a, i) => `
+      <div class="article-card" style="padding:12px 16px;margin-bottom:8px" onclick="showDetail(${a.id})">
+        <div style="display:flex;align-items:baseline;gap:10px">
+          <span style="font-family:var(--mono);font-size:14px;color:var(--accent);font-weight:700">${String(i+1).padStart(2,'0')}</span>
+          <h3 style="font-size:15px;flex:1;margin:0">${a.title}</h3>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--ink-soft)">♥ ${a.likeCount||0}</span>
+        </div>
+      </div>`).join('');
+  } catch(e){ box.innerHTML = '<div style="color:var(--ink-soft);font-family:var(--mono);font-size:12px">热门加载失败</div>'; }
+}
+
 // 启动
 loadList();
+loadHot();
 </script>
 
 </body>

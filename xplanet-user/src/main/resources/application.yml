@@ -6,12 +6,15 @@ spring:
     name: xplanet-user
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:3306/xplanet?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:3306/xplanet?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PWD:root123}
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: 6379
+    password: ${REDIS_PWD:}
 
 mybatis-plus:
-  mapper-locations: classpath:mapper/*.xml
   configuration:
     map-underscore-to-camel-case: true
 
@@ -20,7 +23,3 @@ management:
     web:
       exposure:
         include: health,info
-
-logging:
-  level:
-    com.xplanet: info

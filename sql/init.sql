@@ -43,6 +43,20 @@ CREATE TABLE `article_like` (
     KEY `idx_article_id` (`article_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文章点赞表';
 
+DROP TABLE IF EXISTS `comment`;
+CREATE TABLE `comment` (
+    `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `article_id`  BIGINT UNSIGNED NOT NULL,
+    `user_id`     BIGINT UNSIGNED NOT NULL,
+    `parent_id`   BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '父评论id,0表示顶级评论',
+    `content`     VARCHAR(1000)   NOT NULL,
+    `deleted`     TINYINT         NOT NULL DEFAULT 0,
+    `create_time` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_article` (`article_id`),
+    KEY `idx_parent` (`parent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评论表';
+
 -- 测试数据
 INSERT INTO `user` (`id`, `username`, `nickname`) VALUES
 (1, 'alice', 'Alice'),
@@ -54,3 +68,9 @@ INSERT INTO `article` (`id`, `author_id`, `title`, `content`, `tags`) VALUES
 (2, 1, 'RocketMQ 批量消费削峰',         '通过缓冲合并把同一文章的 N 次点赞合成 1 次 update...', 'mq,rocketmq'),
 (3, 2, 'Cache Aside 延迟双删全解析',    '为什么必须双删,以及第二删延迟到底设多少...', 'cache,consistency'),
 (100, 1, '【热点】高并发缓存击穿应对',     '这是一篇模拟热点文章,用于演示缓存击穿时的分布式锁重建', 'cache,hotkey');
+
+INSERT INTO `comment` (`article_id`, `user_id`, `parent_id`, `content`) VALUES
+(1, 2, 0, '写得很清楚,二级缓存这块受教了'),
+(1, 1, 1, '谢谢,后面会补一篇一致性的'),
+(1, 100, 0, 'Caffeine 的 W-TinyLFU 那段能再展开讲讲吗'),
+(2, 2, 0, '削峰批量合并这个思路很实用');

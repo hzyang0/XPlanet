@@ -1,4 +1,3 @@
-version: "3.8"
 
 # 基础设施一键起(本地混合模式:中间件用 Docker,应用用 IDE 跑)
 # 用法: docker compose -f docker/docker-compose-infra.yml up -d
@@ -10,6 +9,12 @@ services:
     image: mysql:8.0
     container_name: xp-mysql
     restart: unless-stopped
+    # 强制服务端字符集 utf8mb4 + 任何客户端连上来都自动 SET NAMES utf8mb4
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --init-connect='SET NAMES utf8mb4'
+      --skip-character-set-client-handshake
     environment:
       MYSQL_ROOT_PASSWORD: root123
       MYSQL_DATABASE: xplanet

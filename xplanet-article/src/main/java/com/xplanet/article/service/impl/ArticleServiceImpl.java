@@ -3,14 +3,19 @@ package com.xplanet.article.service.impl;
 import com.xplanet.api.dto.ArticleChangeMessage;
 import com.xplanet.api.request.ArticlePublishRequest;
 import com.xplanet.api.vo.ArticleDetailVO;
+import com.xplanet.api.vo.ArticleListItemVO;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xplanet.article.cache.ArticleCacheManager;
 import com.xplanet.article.cache.CacheDelayTask;
 import com.xplanet.article.entity.Article;
 import com.xplanet.article.mapper.ArticleMapper;
 import com.xplanet.article.service.ArticleService;
+import com.xplanet.article.service.UserClient;
 import com.xplanet.common.constant.MqTopics;
 import com.xplanet.common.exception.BizException;
 import com.xplanet.common.response.ErrorCode;
+import com.xplanet.common.response.PageResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
@@ -21,6 +26,8 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 文章服务实现。
@@ -55,6 +62,7 @@ public class ArticleServiceImpl implements ArticleService {
     private final ArticleCacheManager cacheManager;
     private final RocketMQTemplate rocketMQTemplate;
     private final CacheDelayTask cacheDelayTask;
+    private final UserClient userClient;
 
     @Override
     public ArticleDetailVO getDetail(Long articleId) {
@@ -65,6 +73,42 @@ public class ArticleServiceImpl implements ArticleService {
         if (vo == null) {
             throw new BizException(ErrorCode.ARTICLE_NOT_FOUND);
         }
+        return vo;
+    }
+
+    @Override
+    public PageResult<ArticleListItemVO> list(int pageNum, int pageSize) {
+        // 防御:页码、页大小合法化
+        if (pageNum < 1) pageNum = 1;
+        if (pageSize < 1 || pageSize > 50) pageSize = 10;
+
+        // 只查未删除的,按创建时间倒序
+        Page<Article> page = new Page<>(pageNum, pageSize);
+        LambdaQueryWrapper<Article> wrapper = new LambdaQueryWrapper<Article>()
+                .eq(Article::getDeleted, 0)
+                .orderByDesc(Article::getCreateTime);
+        Page<Article> result = articleMapper.selectPage(page, wrapper);
+
+        List<ArticleListItemVO> items = result.getRecords().stream()
+                .map(this::toListItem)
+                .collect(Collectors.toList());
+
+        return PageResult.of(items, result.getTotal(), pageNum, pageSize);
+    }
+
+    private ArticleListItemVO toListItem(Article a) {
+        ArticleListItemVO vo = new ArticleListItemVO();
+        vo.setId(a.getId());
+        vo.setAuthorId(a.getAuthorId());
+        vo.setAuthorName(userClient.getUserName(a.getAuthorId()));
+        vo.setTitle(a.getTitle());
+        // 摘要:正文前 80 字
+        String content = a.getContent() == null ? "" : a.getContent();
+        vo.setSummary(content.length() > 80 ? content.substring(0, 80) + "..." : content);
+        vo.setTags(a.getTags());
+        vo.setLikeCount(a.getLikeCount());
+        vo.setViewCount(a.getViewCount());
+        vo.setCreateTime(a.getCreateTime());
         return vo;
     }
 
@@ -161,7 +205,7 @@ public class ArticleServiceImpl implements ArticleService {
         ArticleDetailVO vo = new ArticleDetailVO();
         BeanUtils.copyProperties(a, vo);
         // authorName 实际应走 user 服务获取,这里 demo 简化
-        vo.setAuthorName("user_" + a.getAuthorId());
+        vo.setAuthorName(userClient.getUserName(a.getAuthorId()));
         return vo;
     }
 }

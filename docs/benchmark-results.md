@@ -1,65 +1,54 @@
 # Benchmark Results
 
-> 压测后请填入真实数据,简历上的"QPS 提升 X 倍"必须以此为依据。
-
 ## 环境
+- 宿主机:Windows + WSL2 Ubuntu 24.04
+- 中间件:本地 Docker 单机 (MySQL 8 / Redis 7 / RocketMQ 4.9.7)
+- 应用:Spring Boot 单实例
+- 压测工具:wrk,跨网卡通过 172.23.176.1 访问
 
-| 项目 | 配置 |
+## 1. 文章详情(二级缓存命中路径)
+
+200 并发,3 篇热点文章随机访问,缓存已预热,持续 30 秒。
+
+```
+wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://172.23.176.1:8081
+```
+
+| 指标 | 值 |
 |---|---|
-| CPU | (填) |
-| 内存 | (填) |
-| JDK | OpenJDK 17 |
-| MySQL | 8.0 (Docker) |
-| Redis | 7-alpine (Docker) |
-| RocketMQ | 4.9.7 (Docker) |
-| 压测客户端 | wrk |
+| QPS | 86388.91 |
+| 平均延迟 | 2.35ms |
+| Max 延迟 | 56.16ms |
+| Stdev | 1.36ms |
+| Timeout | 0 |
+| 30s 累计 | 2,600,343 requests |
 
-## 1. 文章详情接口
+结论:在 L1/L2 缓存路径下,单实例 QPS 达 8.6 万+,延迟稳定在毫秒级。
 
-### 1.1 无缓存(对照组)
-```
-wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8081
-# 把 ArticleServiceImpl.getDetail() 改成 return loadFromDb(articleId) 直接走 DB
-```
+## 2. 点赞接口(承载能力 + 幂等链路)
 
-输出贴这里:
-```
-(粘贴 wrk 结果)
-```
-
-### 1.2 仅 Redis(L1 关闭)
-```
-# Caffeine maximumSize 改成 0
-```
-```
-(粘贴 wrk 结果)
-```
-
-### 1.3 二级缓存(L1 + L2)
-```
-(粘贴 wrk 结果)
-```
-
-### 对比表
-
-| 场景 | QPS | P50 | P99 | Redis QPS | DB QPS |
-|---|---|---|---|---|---|
-| 无缓存 | | | | | |
-| 仅 Redis | | | | | |
-| 二级缓存 | | | | | |
-
-## 2. 点赞接口削峰
+500 并发持续点同一篇文章,持续 30 秒。验证接口承载力与幂等正确性。
 
 ```
-wrk -t8 -c500 -d30s -s benchmark/like.lua http://localhost:8082
-```
-```
-(粘贴 wrk 结果)
+wrk -t8 -c500 -d30s -s benchmark/like.lua http://172.23.176.1:8082
 ```
 
-| 指标 | 数值 |
+| 指标 | 值 |
 |---|---|
-| 接口 QPS | |
-| 接口 P99 | |
-| DB UPDATE QPS(同期) | |
-| 削峰比 | |
+| QPS | 47537.45 |
+| 平均延迟 | 11.79ms |
+| Timeout | 0 |
+| 30s 累计 | 1,433,619 requests |
+| 数据库 UPDATE 增量 | 1 |
+
+结论:接口承载 4.7 万 QPS;143 万次重复点赞经 SADD 幂等链路拦截,
+仅触发 1 次数据库写入,验证幂等链路正确性。
+
+> 真实削峰倍数需多用户分布式压测才能准确量化,此处单用户场景主要验证
+> 幂等机制与接口承载能力。
+
+## 踩过的坑
+
+- 文章详情接口加了 `@RateLimit(limit=100/秒)`,wrk 压测时大量请求被限流拦截,QPS 失真。压测前需临时注释限流注解。
+- lua 脚本随机范围需对齐实际数据集,否则大量请求会落到不存在的文章 ID 上抛 ArticleNotFound。
+- 缓存需先预热再压测,否则首次回源会拉高延迟均值。

@@ -3,7 +3,7 @@
 math.randomseed(os.time())
 
 request = function()
-    local id = math.random(1, 10)
+    local id = math.random(1, 3)
     return wrk.format("GET", "/api/article/" .. id)
 end
 

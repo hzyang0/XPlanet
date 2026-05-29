@@ -64,7 +64,6 @@ public class ArticleCacheManager {
         this.localCache = Caffeine.newBuilder()
                 .maximumSize(10_000)
                 .expireAfterWrite(Duration.ofSeconds(30))
-                .recordStats() // 暴露命中率给 Micrometer
                 .build();
         log.info("ArticleCacheManager initialized, L1 capacity=10000, ttl=30s");
     }
@@ -171,10 +170,5 @@ public class ArticleCacheManager {
             return null;
         }
         return JsonUtil.fromJson(json, ArticleDetailVO.class);
-    }
-
-    /** 暴露 stats 给 Prometheus 抓取 */
-    public Cache<Long, String> getLocalCache() {
-        return localCache;
     }
 }

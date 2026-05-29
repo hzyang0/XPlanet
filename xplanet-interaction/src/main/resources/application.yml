@@ -20,8 +20,3 @@ management:
     web:
       exposure:
         include: health,info
-
-logging:
-  level:
-    com.xplanet: info
-    org.apache.rocketmq: warn

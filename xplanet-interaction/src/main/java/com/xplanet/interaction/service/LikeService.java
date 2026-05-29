@@ -15,7 +15,6 @@ import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Service;
 
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 /**
  * 点赞服务。
@@ -46,40 +45,53 @@ public class LikeService {
     private final RocketMQTemplate rocketMQTemplate;
 
     /**
-     * 点赞
+     * 点赞。返回 true=本次新增点赞成功,false=已点过(幂等,不重复计数)。
      */
     public boolean like(Long userId, Long articleId) {
         validate(userId, articleId);
 
-        // 幂等(防同一用户同一文章 1 分钟内重复点)
-        String idemKey = CacheKeys.likeIdempotent(userId, articleId);
-        Boolean first = redis.opsForValue().setIfAbsent(idemKey, "1", 60, TimeUnit.SECONDS);
-        if (!Boolean.TRUE.equals(first)) {
-            throw new BizException(ErrorCode.LIKE_DUPLICATE);
+        try {
+            // 用"已点赞集合"做幂等判断:SADD 返回 1 表示新加入,0 表示已存在。
+            // 这样幂等状态和业务状态绑定(用户确实点过),不会因为单独的幂等键过期而重复计数。
+            Long added = redis.opsForSet().add(CacheKeys.userLikedSet(userId), String.valueOf(articleId));
+            if (added == null || added == 0) {
+                // 已经点过赞,幂等返回,不重复计数、不重复发消息
+                return false;
+            }
+
+            // 确实是新点赞,实时计数 +1
+            redis.opsForValue().increment(CacheKeys.articleLikeCount(articleId));
+
+            // 异步投 MQ 落库
+            sendLikeMq(userId, articleId, 1);
+            return true;
+        } catch (Exception e) {
+            // 降级:Redis 异常时回滚可能已写入的集合,避免计数与集合不一致
+            try { redis.opsForSet().remove(CacheKeys.userLikedSet(userId), String.valueOf(articleId)); }
+            catch (Exception ignore) {}
+            log.warn("点赞降级,userId={}, articleId={}, err={}", userId, articleId, e.getMessage());
+            throw new BizException(ErrorCode.SERVICE_BUSY);
         }
-
-        // 个人已点赞集合 + 实时计数
-        redis.opsForSet().add(CacheKeys.userLikedSet(userId), String.valueOf(articleId));
-        redis.opsForValue().increment(CacheKeys.articleLikeCount(articleId));
-
-        // 异步投 MQ
-        sendLikeMq(userId, articleId, 1);
-        return true;
     }
 
     /**
-     * 取消点赞
+     * 取消点赞。返回 true=取消成功或本就未点赞(幂等)。
      */
     public boolean cancel(Long userId, Long articleId) {
         validate(userId, articleId);
 
-        // 取消允许重复,但实际 Set.remove 幂等
-        Long removed = redis.opsForSet().remove(CacheKeys.userLikedSet(userId), String.valueOf(articleId));
-        if (removed != null && removed > 0) {
-            redis.opsForValue().decrement(CacheKeys.articleLikeCount(articleId));
-            sendLikeMq(userId, articleId, -1);
+        try {
+            // SREM 返回移除数量:1=确实取消了,0=本来就没点过(幂等)
+            Long removed = redis.opsForSet().remove(CacheKeys.userLikedSet(userId), String.valueOf(articleId));
+            if (removed != null && removed > 0) {
+                redis.opsForValue().decrement(CacheKeys.articleLikeCount(articleId));
+                sendLikeMq(userId, articleId, -1);
+            }
+            return true;
+        } catch (Exception e) {
+            log.warn("取消点赞降级,userId={}, articleId={}, err={}", userId, articleId, e.getMessage());
+            throw new BizException(ErrorCode.SERVICE_BUSY);
         }
-        return true;
     }
 
     private void validate(Long userId, Long articleId) {

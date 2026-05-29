@@ -24,6 +24,7 @@ public enum ErrorCode {
 
     FLOW_BLOCKED(5001, "请求过于频繁,请稍后再试"),
     DEGRADE_FALLBACK(5002, "服务降级,返回缓存数据"),
+    SERVICE_BUSY(5003, "服务繁忙,请稍后再试"),
 
     SYSTEM_ERROR(9999, "系统内部错误");
 
