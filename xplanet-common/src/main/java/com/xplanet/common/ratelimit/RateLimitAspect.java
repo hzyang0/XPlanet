@@ -2,20 +2,18 @@ package com.xplanet.common.ratelimit;
 
 import com.xplanet.common.exception.BizException;
 import com.xplanet.common.response.ErrorCode;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
-import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.stereotype.Component;
 
 import javax.servlet.http.HttpServletRequest;
-import java.lang.reflect.Method;
 import java.util.Collections;
 
 /**
@@ -42,10 +40,16 @@ import java.util.Collections;
 @Slf4j
 @Aspect
 @Component
-@RequiredArgsConstructor
 public class RateLimitAspect {
 
     private final StringRedisTemplate redis;
+    private final boolean trustForwardedHeaders;
+
+    public RateLimitAspect(StringRedisTemplate redis,
+                           @Value("${security.proxy.trust-forwarded-headers:false}") boolean trustForwardedHeaders) {
+        this.redis = redis;
+        this.trustForwardedHeaders = trustForwardedHeaders;
+    }
 
     // INCR + 首次设过期,返回当前计数
     private static final DefaultRedisScript<Long> SCRIPT = new DefaultRedisScript<>(
@@ -74,12 +78,20 @@ public class RateLimitAspect {
         try {
             ServletRequestAttributes attr = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
             if (attr != null) {
-                HttpServletRequest req = attr.getRequest();
-                String xff = req.getHeader("X-Forwarded-For");
-                if (xff != null && !xff.isEmpty()) return xff.split(",")[0].trim();
-                return req.getRemoteAddr();
+                return resolveClientIp(attr.getRequest());
             }
         } catch (Exception ignore) {}
         return "unknown";
+    }
+
+    String resolveClientIp(HttpServletRequest request) {
+        if (trustForwardedHeaders) {
+            String forwardedFor = request.getHeader("X-Forwarded-For");
+            if (forwardedFor != null && !forwardedFor.trim().isEmpty()) {
+                return forwardedFor.split(",", 2)[0].trim();
+            }
+        }
+        String remoteAddress = request.getRemoteAddr();
+        return remoteAddress == null || remoteAddress.trim().isEmpty() ? "unknown" : remoteAddress;
     }
 }
