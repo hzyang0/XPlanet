@@ -14,6 +14,7 @@ services:
       dockerfile: docker/Dockerfile.app
       args:
         MODULE: xplanet-article
+        BASE_REGISTRY: ${DOCKER_BASE_REGISTRY:-docker.io/library}
     container_name: xp-article
     restart: unless-stopped
     environment:
@@ -35,6 +36,7 @@ services:
       dockerfile: docker/Dockerfile.app
       args:
         MODULE: xplanet-interaction
+        BASE_REGISTRY: ${DOCKER_BASE_REGISTRY:-docker.io/library}
     container_name: xp-interaction
     restart: unless-stopped
     environment:
@@ -56,6 +58,7 @@ services:
       dockerfile: docker/Dockerfile.app
       args:
         MODULE: xplanet-user
+        BASE_REGISTRY: ${DOCKER_BASE_REGISTRY:-docker.io/library}
     container_name: xp-user
     restart: unless-stopped
     environment:

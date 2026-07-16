@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - name: Unit tests
+        run: mvn -B -ntp clean test
+      - name: Validate Compose files
+        env:
+          TOKEN_SECRET: ci-only-token-secret-at-least-32-characters
+        run: |
+          docker compose -f docker/docker-compose-infra.yml config --quiet
+          docker compose -f docker/docker-compose-app.yml config --quiet
+      - name: Parse PowerShell scripts
+        shell: pwsh
+        run: |
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            [void][scriptblock]::Create((Get-Content $_.FullName -Raw -Encoding UTF8))
+          }

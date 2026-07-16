@@ -57,10 +57,9 @@ services:
     ports:
       - "10909:10909"
       - "10911:10911"
-    # 关键:挂载 broker.conf 指定 brokerIP1,否则 broker 向 namesrv
-    # 注册的是容器内网 IP,本机应用拿到后连不上 → 发消息超时/收不到消息。
+    # 混合模式默认挂载 broker-host.conf；全 Docker 模式由启动脚本切换为 broker-docker.conf。
     volumes:
-      - ./broker.conf:/home/rocketmq/rocketmq-4.9.7/conf/broker.conf:ro
+      - ./${ROCKETMQ_BROKER_CONFIG:-broker-host.conf}:/home/rocketmq/rocketmq-4.9.7/conf/broker.conf:ro
     command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/rocketmq-4.9.7/conf/broker.conf
 
 volumes:

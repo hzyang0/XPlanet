@@ -161,3 +161,11 @@ Redis SETNX 不再作为最终保证。
 **关于刻意不做的部分**:网关、注册中心、分布式事务、监控全家桶在这个业务规模下属于过度设计,没有引入。
 缓存一致性也没上 Canal binlog 兜底——社区场景下「双删 + MQ 广播」已足够,binlog 兜底是为不存在的问题加复杂度。
 工程的判断力体现在「该用什么」,也体现在「不该用什么」。
+
+## 6. 部署与迁移
+
+- 本地混合模式通过 `scripts/setup-infra.ps1` 启动中间件，RocketMQ broker 广播宿主机地址，Java 服务在 IDE 或本机 JVM 中运行；
+- 全 Docker 模式通过 `scripts/start-docker.ps1` 切换 broker 容器地址、执行 Flyway、构建三个应用镜像并等待健康；
+- `sql/init.sql` 负责新数据卷的完整 V004 结构，Flyway 对已有或新建数据库建立 V4 baseline；以后只新增 V005 及以上脚本；
+- 两种模式共用固定 `xplanet-net` 网络，但分别使用 `broker-host.conf` 和 `broker-docker.conf`，避免 broker 把客户端无法访问的地址注册到 NameServer；
+- CI 执行全 Reactor 单元测试、两份 Compose 配置解析和全部 PowerShell 脚本语法检查；真实 MySQL/Redis/RocketMQ 行为由 `scripts/smoke-test.ps1` 验证。

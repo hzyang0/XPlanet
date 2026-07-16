@@ -1,9 +1,9 @@
 # XPlanet Research 整体优化改进方案
 
-> 文档状态：架构基线 v2.3（实施中）
+> 文档状态：架构基线 v2.4（实施中）
 > 基线日期：2026-07-16  
 > 适用范围：当前 XPlanet Java 项目及计划新增的 AI Agent 能力  
-> 当前阶段：只确定方案和实施顺序，不代表目标能力已经完成
+> 当前阶段：Phase 0 可信基线与后端首轮可靠性整改已完成，开始实施 AI 最小业务闭环
 
 ## 0. 文档规则
 
@@ -87,8 +87,8 @@
 |---|---:|---|---|
 | `xplanet-common` | - | 响应、异常、鉴权、限流、公共常量 | 已实现，待完善 |
 | `xplanet-api` | - | Java 服务间 DTO/VO 契约 | 已实现 |
-| `xplanet-user` | 8083 | 用户查询、简化登录和 Token 签发 | 已实现，待修复安全问题 |
-| `xplanet-article` | 8081 | 文章、评论、热榜、二级缓存、点赞持久化投影 | 已实现，缓存链路仍待完善 |
+| `xplanet-user` | 8083 | 用户查询、bcrypt 登录和 JWT 签发 | 已实现；刷新/撤销为可选演进 |
+| `xplanet-article` | 8081 | 文章、评论、热榜、二级缓存、缓存失效 Outbox、点赞持久化投影 | 已实现；热榜和评论分页待完善 |
 | `xplanet-interaction` | 8082 | 点赞状态机、Transactional Outbox、MQ relay | 已实现 |
 | `xplanet-web` | 静态页 | 社区功能演示 | 已实现，计划升级 |
 
@@ -99,7 +99,7 @@
 ### 2.2 当前真实优势
 
 1. 文章详情采用 Caffeine L1 + Redis L2，覆盖空值缓存、TTL 抖动和热点重建锁；
-2. 文章修改使用 Cache Aside、事务提交后通知、多实例 L1 广播和延迟二次删除思路；
+2. 文章修改使用 Cache Aside，数据库变更与立即/延迟失效 Outbox 同事务提交，并通过 MQ 广播清理多实例 L1/L2；
 3. 点赞使用数据库条件状态迁移、Transactional Outbox、RocketMQ 和持久化增量投影；
 4. Redis Lua 实现轻量固定窗口限流；
 5. 用户服务不可用时，文章展示能使用缓存或兜底作者名；
@@ -117,7 +117,7 @@
 | CUR-P0-04 | Redis `RENAME` 后实例崩溃，没有完整恢复协议 | 聚合增量可能滞留 | 已改为数据库行锁批次，计数更新和事件标记处于同一事务 |
 | CUR-P0-05 | 登录不校验密码，Token 密钥硬编码 | 仅能作为 Demo，不能当生产鉴权 | 已完成 PasswordEncoder/bcrypt、标准 JWT/JWS 和外部密钥；刷新/撤销机制按需后续实现 |
 | CUR-P0-06 | 前端把服务端标题、摘要、评论等插入 `innerHTML` | 存储型 XSS 风险 | 已完成动态文本统一转义和动态 ID 数值约束；Vue升级后继续依赖框架默认转义 |
-| CUR-P0-07 | 全 Docker 模式下 RocketMQ broker 注册地址不正确；此前 article→user 地址和 Compose 网络也不稳定 | 容器应用无法稳定互通 | 已修复 Feign 容器地址和固定 `xplanet-net` 网络；仍需分离 RocketMQ host/container 广播地址并增加启动检查 |
+| CUR-P0-07 | 全 Docker 模式下 RocketMQ broker 注册地址不正确；此前 article→user 地址和 Compose 网络也不稳定 | 容器应用无法稳定互通 | 已分离 host/container broker 配置、修复 Feign 容器地址和固定网络；全 Docker 构建、健康检查及端到端链路已实测通过 |
 | CUR-P0-08 | 点赞只校验正数 ID，不校验文章存在和删除状态 | 接口返回成功但文章投影拒绝事件，关系状态和计数分裂 | 已增加 interaction→article 轻量 OpenFeign 校验；不存在文章不写关系和 Outbox，依赖故障时失败关闭 |
 
 #### P1：工程质量和性能
@@ -135,7 +135,7 @@
 
 #### P2：清理和可维护性
 
-- 当前已有54个单元测试，并新增真实 MySQL/Redis/RocketMQ 正常链路 smoke test；进程崩溃等自动化故障注入仍待补充；
+- 当前已有54个单元测试，并新增真实 MySQL/Redis/RocketMQ 正常链路 smoke test；缓存失效已完成 broker 停止/恢复故障注入，进程崩溃自动化仍待补充；
 - 已删除未使用的 Spring Cloud Alibaba BOM 和 `hutool-all`；保留的 Spring Cloud BOM 供 OpenFeign 使用；
 - 已删除未使用的缓存 Key、错误码和未赋值的响应 `traceId`；真正引入 TraceId 时应完成 HTTP/MQ 全链路透传；
 - 静态页面直接配置三个服务地址，缺少统一入口；
@@ -695,16 +695,16 @@ Agent Model API Key
 
 Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 展示变量名，通过本地 `.env` 注入，真实值不得提交。
 
-### 14.2 Docker整改
+### 14.2 Docker整改（基础阶段已完成）
 
-1. 分开本地混合模式和全容器模式的 RocketMQ broker 地址；
-2. article 容器显式配置 user 服务地址；
-3. user 容器补全 Redis 和密码变量；
-4. 使用统一、明确的 Compose 网络名称；
-5. 移除过时的顶层 `version`；
-6. 每个服务添加 healthcheck 和依赖就绪检查；
-7. AI Agent 仅暴露内部端口，外部通过 Gateway/AI 服务访问；
-8. 提供 `docker compose config` 和端到端 smoke test。
+1. [x] 分开本地混合模式和全容器模式的 RocketMQ broker 地址；
+2. [x] article/interaction 容器显式配置类型化 OpenFeign 服务地址；
+3. [x] user 容器补全 Redis 和外部 Token 配置；
+4. [x] 使用统一、明确的 Compose 网络名称；
+5. [x] 移除过时的顶层 `version`；
+6. [x] 启动脚本执行依赖就绪和三个应用健康检查；
+7. [ ] AI Agent 仅暴露内部端口，外部通过 Gateway/AI 服务访问；
+8. [x] 提供 Compose 配置校验、Flyway 自动迁移和端到端 smoke test。
 
 ### 14.3 暂不处理的基础设施
 
@@ -724,11 +724,11 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 目标：文档、代码和测试结果能够互相对应。
 
 - [x] 形成总体方案文档；
-- [ ] 给现有关键链路补最小测试；
-- [ ] 把历史性能数字标注为待复测；
-- [ ] 建立配置样例和环境检查脚本；
-- [ ] 清理无用依赖和历史构建产物；
-- [ ] 为每个已知问题建立任务编号。
+- [x] 给现有关键链路补最小测试；
+- [x] 把历史性能数字标注为待复测；
+- [x] 建立配置样例、迁移和环境检查脚本；
+- [x] 清理无用依赖和历史构建产物；
+- [x] 为每个已知问题建立任务编号。
 
 验收：全 Reactor 构建通过；测试不再是“0 tests”；Compose 配置可验证；README明确区分当前能力和目标能力。
 
@@ -763,7 +763,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 ### Phase 3：后端正确性重构
 
 - [x] 点赞改为数据库状态机 + Outbox + 持久化计数投影；
-- [ ] 缓存失效改为可靠事件和可重试延迟删除；
+- [x] 缓存失效改为可靠事件和可重试延迟删除；
 - [x] 修正 Redisson 锁语义；
 - [x] 用户密码哈希校验、标准 JWT/JWS 和外部化 Token 密钥；
 - [x] 类型化 OpenFeign、连接/读取超时和 Docker 服务地址；
@@ -783,7 +783,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 - [ ] Gateway统一入口；
 - [ ] TraceId 全链路；
 - [ ] 任务、模型、工具、MQ、缓存指标面板；
-- [ ] Docker Compose 一键启动；
+- [x] Docker Compose 一键启动；
 - [ ] 演示脚本、录屏、架构图和简历材料。
 
 验收：新环境按文档一键启动；完整演示不需要手工改数据库；面板能展示一次任务的步骤、来源、成本和耗时。
@@ -911,6 +911,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 | 版本 | 日期 | 变更 | 影响 |
 |---|---|---|---|
+| v2.4 | 2026-07-16 | 分离 RocketMQ 宿主机/容器 broker 配置；增加 Flyway V4 baseline 与自动迁移脚本、全 Docker 启动健康检查、可配置基础镜像仓库及 CI；实际完成全镜像构建和 smoke test | 新环境不再手工执行历史 SQL；混合与容器网络均获得可达 broker 地址；提交时自动拦截单测、Compose 或 PowerShell 语法回归 |
 | v2.3 | 2026-07-16 | 文章更新/删除与立即、延迟两条缓存失效 Outbox 同事务提交；新增带租约 relay、失败退避、L1/L2 幂等消费，并将 article 调度池扩为4线程 | MQ 故障和提交后进程崩溃不再永久丢失缓存失效；热榜刷新、点赞投影和缓存 relay 不再共用单调度线程 |
 | v2.2 | 2026-07-16 | interaction 点赞前通过轻量 OpenFeign 接口校验文章存在且未删除；新增依赖失败关闭、不存在文章零写入测试和真实冒烟断言 | 修复“关系已点赞但文章计数事件被拒绝”的状态分裂；取消点赞仍允许清理删除文章的历史关系 |
 | v2.1 | 2026-07-16 | 完成本地运行验证并新增 `scripts/smoke-test.ps1`：覆盖三服务健康、JWT登录、文章读取、点赞状态机与重复幂等、Outbox→RocketMQ→持久化投影、鉴权失败；测试后恢复业务状态 | 正常链路具备可重复的行为验收，不再依赖手工 curl 或只看启动日志；首次 MQ 消费者订阅冷启动由脚本容忍90秒 |
