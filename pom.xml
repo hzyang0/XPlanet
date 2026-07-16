@@ -34,14 +34,12 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <spring-cloud.version>2021.0.8</spring-cloud.version>
-        <spring-cloud-alibaba.version>2021.0.5.0</spring-cloud-alibaba.version>
         <mybatis-plus.version>3.5.5</mybatis-plus.version>
         <mysql.version>8.0.33</mysql.version>
         <redisson.version>3.27.2</redisson.version>
         <caffeine.version>2.9.3</caffeine.version>
         <rocketmq.version>2.2.3</rocketmq.version>
         <jjwt.version>0.13.0</jjwt.version>
-        <hutool.version>5.8.25</hutool.version>
         <jackson.version>2.15.3</jackson.version>
         <lombok.version>1.18.30</lombok.version>
     </properties>
@@ -55,14 +53,6 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            <dependency>
-                <groupId>com.alibaba.cloud</groupId>
-                <artifactId>spring-cloud-alibaba-dependencies</artifactId>
-                <version>${spring-cloud-alibaba.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-
             <!-- 内部模块 -->
             <dependency>
                 <groupId>com.xplanet</groupId>
@@ -114,11 +104,6 @@
                 <groupId>io.jsonwebtoken</groupId>
                 <artifactId>jjwt-jackson</artifactId>
                 <version>${jjwt.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>cn.hutool</groupId>
-                <artifactId>hutool-all</artifactId>
-                <version>${hutool.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.projectlombok</groupId>

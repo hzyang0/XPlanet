@@ -1,0 +1,4 @@
+interface:
+  display_name: "XPlanet Dev Workflow"
+  short_description: "Read, modify, build, run, and verify XPlanet"
+  default_prompt: "Use $xplanet-dev to inspect, modify, build, run, and verify this XPlanet repository."
