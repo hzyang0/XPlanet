@@ -132,6 +132,15 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 或直接打开 `xplanet-web/index.html`:先在顶部用用户名(alice/bob)登录,再操作。
 本地初始化账号 `alice`、`bob`、`demo` 的演示密码均为 `password`，数据库中只保存 bcrypt 哈希。
 
+三个服务与中间件都启动后，可执行可重复的端到端冒烟测试：
+
+```powershell
+.\scripts\smoke-test.ps1
+```
+
+脚本会验证健康检查、登录、文章查询、重复点赞幂等、Outbox 发送、MQ 消费、持久化计数投影和未登录拦截，
+并在结束时恢复原点赞状态和文章计数。RocketMQ 冷启动首次建立消费者订阅可能需要几十秒，脚本默认等待上限为 90 秒。
+
 ## 性能测试
 
 见 [`benchmark/README.md`](benchmark/README.md) 与 [`docs/benchmark-results.md`](docs/benchmark-results.md)。
@@ -154,6 +163,7 @@ xplanet/
 │   ├── Dockerfile.app
 │   └── broker.conf                # RocketMQ broker IP 配置
 ├── sql/init.sql
+├── scripts/                 # 构建、启动基础设施/应用、端到端冒烟测试
 ├── benchmark/               # wrk 压测脚本
 └── docs/
     ├── ARCHITECTURE.md

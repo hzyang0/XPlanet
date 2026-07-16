@@ -1,6 +1,6 @@
 # XPlanet Research 整体优化改进方案
 
-> 文档状态：架构基线 v2.0（实施中）
+> 文档状态：架构基线 v2.1（实施中）
 > 基线日期：2026-07-16  
 > 适用范围：当前 XPlanet Java 项目及计划新增的 AI Agent 能力  
 > 当前阶段：只确定方案和实施顺序，不代表目标能力已经完成
@@ -134,7 +134,7 @@
 
 #### P2：清理和可维护性
 
-- 当前已有41个单元测试，但仍缺真实 MySQL/Redis/RocketMQ 端到端故障测试；
+- 当前已有41个单元测试，并新增真实 MySQL/Redis/RocketMQ 正常链路 smoke test；MQ 不可用、进程崩溃等自动化故障注入仍待补充；
 - 已删除未使用的 Spring Cloud Alibaba BOM 和 `hutool-all`；保留的 Spring Cloud BOM 供 OpenFeign 使用；
 - 已删除未使用的缓存 Key、错误码和未赋值的响应 `traceId`；真正引入 TraceId 时应完成 HTTP/MQ 全链路透传；
 - 静态页面直接配置三个服务地址，缺少统一入口；
@@ -802,7 +802,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 ### P0：最先实施
 
-1. `BASE-001`：建立测试基线和可信 smoke test；
+1. `BASE-001`：已建立41个单元测试基线和可重复执行的真实中间件 smoke test；故障注入继续迭代；
 2. `AI-001`：创建 AI 任务状态机和数据库表；
 3. `AI-002`：实现 Transactional Outbox 和 Agent 任务消费；
 4. `AI-003`：实现五节点 Agent 最小图；
@@ -910,6 +910,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 | 版本 | 日期 | 变更 | 影响 |
 |---|---|---|---|
+| v2.1 | 2026-07-16 | 完成本地运行验证并新增 `scripts/smoke-test.ps1`：覆盖三服务健康、JWT登录、文章读取、点赞状态机与重复幂等、Outbox→RocketMQ→持久化投影、鉴权失败；测试后恢复业务状态 | 正常链路具备可重复的行为验收，不再依赖手工 curl 或只看启动日志；首次 MQ 消费者订阅冷启动由脚本容忍90秒 |
 | v2.0 | 2026-07-16 | 仓库瘦身：删除历史 gateway 编译产物、重复/失效启动验证文件和旧面试文档；移除未使用 Alibaba BOM、Hutool、错误码与空 traceId；同步项目级 xplanet-dev skill | 当前代码、文档、脚本和开发工作流只保留一套有效事实，减少依赖和历史残留干扰 |
 | v1.9 | 2026-07-16 | 根依赖管理及 user/article/interaction 统一切换到 `com.mysql:mysql-connector-j` 当前坐标 | 消除旧 `mysql:mysql-connector-java` relocation 警告，降低后续依赖解析兼容风险 |
 | v1.8 | 2026-07-16 | 完成 CUR-P1-02：缓存重建改用 Redisson watchdog 语义的 `tryLock(wait, unit)`，新增2个缓存测试并修正文档 | DB 回源超过原固定3秒租约时，锁不会因租约到期提前释放造成并发重建 |
