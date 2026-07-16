@@ -1,6 +1,6 @@
 # XPlanet Research 整体优化改进方案
 
-> 文档状态：架构基线 v1.4（实施中）
+> 文档状态：架构基线 v1.5（实施中）
 > 基线日期：2026-07-16  
 > 适用范围：当前 XPlanet Java 项目及计划新增的 AI Agent 能力  
 > 当前阶段：只确定方案和实施顺序，不代表目标能力已经完成
@@ -117,7 +117,7 @@
 | CUR-P0-04 | Redis `RENAME` 后实例崩溃，没有扫描和恢复临时 flushing key | 聚合增量可能滞留 | 使用持久化投影表或实现可恢复批次协议 |
 | CUR-P0-05 | 登录不校验密码，Token 密钥硬编码 | 仅能作为 Demo，不能当生产鉴权 | 已完成 PasswordEncoder/bcrypt、标准 JWT/JWS 和外部密钥；刷新/撤销机制按需后续实现 |
 | CUR-P0-06 | 前端把服务端标题、摘要、评论等插入 `innerHTML` | 存储型 XSS 风险 | 已完成动态文本统一转义和动态 ID 数值约束；Vue升级后继续依赖框架默认转义 |
-| CUR-P0-07 | 全 Docker 模式下 RocketMQ broker 注册地址和 article→user 默认地址不正确 | 容器应用无法稳定互通 | 分离 host/container 配置并增加启动检查 |
+| CUR-P0-07 | 全 Docker 模式下 RocketMQ broker 注册地址不正确；此前 article→user 地址和 Compose 网络也不稳定 | 容器应用无法稳定互通 | 已修复 Feign 容器地址和固定 `xplanet-net` 网络；仍需分离 RocketMQ host/container 广播地址并增加启动检查 |
 
 #### P1：工程质量和性能
 
@@ -909,6 +909,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 | 版本 | 日期 | 变更 | 影响 |
 |---|---|---|---|
+| v1.5 | 2026-07-16 | 基础设施和应用 Compose 统一使用固定 `xplanet-net` 网络，删除废弃的 Compose `version` 字段 | Compose 项目名或工作目录变化时，应用仍能定位基础设施网络；消除版本警告 |
 | v1.4 | 2026-07-16 | 完成 CUR-P1-04：按 IP 限流默认使用连接地址，仅在可信代理模式读取首个转发地址，并新增4个单元测试 | 客户端不能再通过自行设置 `X-Forwarded-For` 绕过默认限流维度 |
 | v1.3 | 2026-07-16 | 完成 CUR-P0-06：文章、标签、评论、错误和热榜动态内容统一转义，动态ID限制为安全整数 | 阻断静态演示页主要存储型XSS和属性注入路径 |
 | v1.2 | 2026-07-16 | 完成 CUR-P0-05：bcrypt密码校验、标准JWT/JWS、外部密钥、旧库迁移和鉴权测试 | 登录不再接受空密码，数据库和代码不保存明文密码/固定签名密钥 |
