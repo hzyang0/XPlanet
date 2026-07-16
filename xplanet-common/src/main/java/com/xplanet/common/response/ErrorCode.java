@@ -20,6 +20,7 @@ public enum ErrorCode {
 
     ARTICLE_NOT_FOUND(3001, "文章不存在"),
     ARTICLE_DELETED(3002, "文章已删除"),
+    COMMENT_PARENT_INVALID(3003, "父评论不存在、不属于当前文章或不是顶级评论"),
 
     LIKE_DUPLICATE(4001, "重复点赞已忽略"),
 

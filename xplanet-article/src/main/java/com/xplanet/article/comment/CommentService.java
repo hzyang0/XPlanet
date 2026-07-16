@@ -3,11 +3,14 @@ package com.xplanet.article.comment;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.xplanet.api.request.CommentPublishRequest;
 import com.xplanet.api.vo.CommentVO;
+import com.xplanet.article.entity.Article;
+import com.xplanet.article.mapper.ArticleMapper;
 import com.xplanet.article.service.UserClient;
 import com.xplanet.common.exception.BizException;
 import com.xplanet.common.response.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -29,21 +32,50 @@ public class CommentService {
 
     private final CommentMapper commentMapper;
     private final UserClient userClient;
+    private final ArticleMapper articleMapper;
 
     /** 发布评论 */
+    @Transactional
     public Long publish(Long userId, CommentPublishRequest req) {
-        if (req.getContent() == null || req.getContent().trim().isEmpty()) {
+        if (userId == null || userId <= 0 || req == null || req.getArticleId() == null
+                || req.getArticleId() <= 0 || req.getContent() == null
+                || req.getContent().trim().isEmpty() || req.getContent().trim().length() > 1000) {
             throw new BizException(ErrorCode.PARAM_INVALID);
         }
+
+        Article article = articleMapper.selectById(req.getArticleId());
+        if (article == null || !Integer.valueOf(0).equals(article.getDeleted())) {
+            throw new BizException(ErrorCode.ARTICLE_NOT_FOUND);
+        }
+
+        Long parentId = req.getParentId() == null ? 0L : req.getParentId();
+        if (parentId < 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID);
+        }
+        if (parentId > 0) {
+            validateParentComment(req.getArticleId(), parentId);
+        }
+
         Comment c = new Comment();
         c.setArticleId(req.getArticleId());
         c.setUserId(userId);
-        c.setParentId(req.getParentId() == null ? 0L : req.getParentId());
+        c.setParentId(parentId);
         c.setContent(req.getContent().trim());
         c.setDeleted(0);
         c.setCreateTime(LocalDateTime.now());
         commentMapper.insert(c);
         return c.getId();
+    }
+
+    private void validateParentComment(Long articleId, Long parentId) {
+        Comment parent = commentMapper.selectById(parentId);
+        if (parent == null
+                || !Integer.valueOf(0).equals(parent.getDeleted())
+                || !articleId.equals(parent.getArticleId())
+                || parent.getParentId() == null
+                || parent.getParentId() != 0L) {
+            throw new BizException(ErrorCode.COMMENT_PARENT_INVALID);
+        }
     }
 
     /** 查询某文章的评论,返回两级嵌套结构 */
