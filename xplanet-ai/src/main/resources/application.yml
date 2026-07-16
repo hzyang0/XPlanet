@@ -1,0 +1,38 @@
+server:
+  port: 8084
+
+security:
+  token:
+    secret: ${TOKEN_SECRET:}
+    issuer: xplanet
+    expiration-seconds: ${TOKEN_EXPIRE_SECONDS:86400}
+
+spring:
+  application:
+    name: xplanet-ai
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:3306/xplanet?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PWD:root123}
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: 6379
+    password: ${REDIS_PWD:}
+
+rocketmq:
+  name-server: ${ROCKETMQ_NS:localhost:9876}
+  producer:
+    group: xplanet-ai-producer
+    send-message-timeout: 3000
+
+ai:
+  outbox:
+    publish-interval-ms: ${AI_OUTBOX_INTERVAL_MS:500}
+    batch-size: ${AI_OUTBOX_BATCH_SIZE:50}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

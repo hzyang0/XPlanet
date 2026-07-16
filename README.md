@@ -1,6 +1,6 @@
 # XPlanet
 
-> 开发者社区平台 —— 聚焦「读多写多」高并发场景下的**二级缓存、缓存一致性、点赞削峰**三个核心问题的工程实践。
+> 面向开发者的研究与社区平台：已完成高并发社区底座和 AI 任务控制面，正在接入可追溯 Agent 执行闭环。
 
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.18-brightgreen.svg)](https://spring.io/projects/spring-boot)
@@ -30,6 +30,11 @@
 - **服务间调用**:article 调 user 服务取作者名；interaction 点赞前轻量校验文章有效性，均配置显式超时
 - **文章列表分页 + 评论(两级嵌套)**:完整的社区业务闭环
 
+**AI 研究控制面（当前已实现）**
+- **任务状态与请求幂等**：`xplanet-ai` 管理私有研究任务、运行实例、预算上限和版本条件状态迁移
+- **可靠长任务命令**：任务/运行/Outbox 同事务提交，带租约 relay 向 RocketMQ 投递请求与取消命令
+- **可追溯数据模型**：已建立来源、证据、引用、报告版本、模型用量和消费 Inbox 表；Python Agent 执行与进度流将在下一阶段接入
+
 > 刻意没有引入网关、注册中心、分布式事务、监控全家桶等——在这个业务规模下属于过度设计。
 > 高可用(集群/哨兵/多实例)作为演进方向写在 [`docs/HA-AND-DEGRADE.md`](docs/HA-AND-DEGRADE.md),按需扩展。
 > 工程的价值在于「按场景选型」,而不是技术数量。
@@ -37,12 +42,12 @@
 ## 架构
 
 ```
-              ┌──────────────┐   ┌──────────────┐   ┌──────────┐
-   前端演示页 ─┤ Article 8081 │   │Interaction   │   │ User     │
-              │ 文章+二级缓存 │   │  8082 点赞    │   │ 8083     │
-              └──────┬───────┘   └──────┬───────┘   └────┬─────┘
-                     │                  │                │
-            ┌────────┴──────────────────┴────────────────┘
+              ┌──────────────┐  ┌──────────────┐  ┌──────────┐  ┌──────────────┐
+   前端演示页 ─┤ Article 8081 │  │Interaction   │  │ User     │  │ AI 8084      │
+              │ 文章+二级缓存 │  │  8082 点赞    │  │ 8083     │  │任务+报告模型  │
+              └──────┬───────┘  └──────┬───────┘  └────┬─────┘  └──────┬───────┘
+                     │                 │               │               │
+            ┌────────┴─────────────────┴───────────────┴───────────────┘
             │
      ┌──────┴───────┐   ┌──────────┐   ┌─────────────┐
      │ MySQL        │   │  Redis   │   │  RocketMQ   │
@@ -62,6 +67,7 @@
 | `xplanet-article` | 8081 | 文章服务 | **二级缓存、延迟双删、批量消费点赞落库、列表分页、评论、限流、调用 user 服务** |
 | `xplanet-interaction` | 8082 | 点赞服务 | **文章有效性校验、关系状态机、Transactional Outbox、可恢复 MQ relay** |
 | `xplanet-user` | 8083 | 用户服务 | 用户查询、bcrypt 登录与 JWT 签发 |
+| `xplanet-ai` | 8084 | AI 控制面 | **私有任务、请求幂等、预算、运行记录、证据/报告模型、可靠命令 Outbox** |
 
 ## 快速开始
 
@@ -93,15 +99,16 @@ Docker Compose 用户可复制 `.env.example` 为 `.env` 后替换其中的示�
 mvn -DskipTests clean install
 ```
 
-#### 3. 启动 3 个服务
+#### 3. 启动 4 个 Java 服务
 
-IDEA 直接 Run:`ArticleApplication`(8081)、`InteractionApplication`(8082)、`UserApplication`(8083)。
+IDEA 直接 Run:`ArticleApplication`(8081)、`InteractionApplication`(8082)、`UserApplication`(8083)、`AiApplication`(8084)。
 
 或命令行(Windows 可用 `scripts/start-local.ps1` 一键起):
 ```bash
 mvn -pl xplanet-article     -am spring-boot:run
 mvn -pl xplanet-interaction -am spring-boot:run
 mvn -pl xplanet-user        -am spring-boot:run
+mvn -pl xplanet-ai          -am spring-boot:run
 ```
 
 #### 4. 验证
@@ -135,7 +142,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 .\scripts\smoke-test.ps1
 ```
 
-脚本会验证健康检查、登录、文章查询、可靠缓存失效 Outbox、重复点赞幂等、MQ 消费、持久化计数投影和未登录拦截，
+脚本会验证健康检查、登录、AI 任务私有读取/幂等/预算/取消命令、文章查询、可靠缓存失效 Outbox、重复点赞幂等、MQ 消费、持久化计数投影和未登录拦截，
 并在结束时恢复原点赞状态和文章计数。RocketMQ 冷启动首次建立消费者订阅可能需要几十秒，脚本默认等待上限为 90 秒。
 
 ### 方式二：全 Docker 模式（演示推荐）
@@ -166,6 +173,7 @@ xplanet/
 ├── xplanet-article/         # 文章服务 ★ 核心
 ├── xplanet-interaction/     # 点赞服务 ★ 核心
 ├── xplanet-user/            # 用户服务
+├── xplanet-ai/              # AI 任务控制面（Agent Worker 下一阶段接入）
 ├── xplanet-web/             # 演示前端
 ├── docker/
 │   ├── docker-compose-infra.yml   # 中间件(本地混合模式用这个)
@@ -191,6 +199,7 @@ xplanet/
 - Token 使用标准 JWT/JWS 库签发和校验，签名密钥通过 `TOKEN_SECRET` 外部注入
 - 登录使用 Spring PasswordEncoder 校验 bcrypt 哈希；演示账号共用初始密码，仅用于本地数据
 - 点赞以 `like_relation` 为事实源,通过 Outbox 至少一次投递；消费端唯一事件表和事务批量投影吸收重复并支持崩溃恢复
+- AI 目前完成 Java 控制面和可追溯数据模型；尚未声称已经完成真实检索、模型调用、报告生成或 Agent 恢复
 
 这些是有意识的取舍,不是不知道,面试时可展开聊改造方案。
 

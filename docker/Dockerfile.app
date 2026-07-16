@@ -9,6 +9,7 @@ COPY xplanet-api/pom.xml xplanet-api/pom.xml
 COPY xplanet-article/pom.xml xplanet-article/pom.xml
 COPY xplanet-interaction/pom.xml xplanet-interaction/pom.xml
 COPY xplanet-user/pom.xml xplanet-user/pom.xml
+COPY xplanet-ai/pom.xml xplanet-ai/pom.xml
 # 预下载依赖
 RUN mvn -B -q -ntp dependency:go-offline -DskipTests || true
 COPY . .

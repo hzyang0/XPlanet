@@ -1,6 +1,6 @@
 # XPlanet Research 整体优化改进方案
 
-> 文档状态：架构基线 v2.4（实施中）
+> 文档状态：架构基线 v2.5（实施中）
 > 基线日期：2026-07-16  
 > 适用范围：当前 XPlanet Java 项目及计划新增的 AI Agent 能力  
 > 当前阶段：Phase 0 可信基线与后端首轮可靠性整改已完成，开始实施 AI 最小业务闭环
@@ -90,6 +90,7 @@
 | `xplanet-user` | 8083 | 用户查询、bcrypt 登录和 JWT 签发 | 已实现；刷新/撤销为可选演进 |
 | `xplanet-article` | 8081 | 文章、评论、热榜、二级缓存、缓存失效 Outbox、点赞持久化投影 | 已实现；热榜和评论分页待完善 |
 | `xplanet-interaction` | 8082 | 点赞状态机、Transactional Outbox、MQ relay | 已实现 |
+| `xplanet-ai` | 8084 | 私有研究任务、运行记录、预算、请求幂等、可靠命令 Outbox | 控制面已实现；Agent 结果与进度待接入 |
 | `xplanet-web` | 静态页 | 社区功能演示 | 已实现，计划升级 |
 
 基础设施为 MySQL、Redis、RocketMQ，文章热点读使用 Caffeine + Redis 二级缓存，Redisson 用于缓存重建锁。
@@ -135,7 +136,7 @@
 
 #### P2：清理和可维护性
 
-- 当前已有54个单元测试，并新增真实 MySQL/Redis/RocketMQ 正常链路 smoke test；缓存失效已完成 broker 停止/恢复故障注入，进程崩溃自动化仍待补充；
+- 当前已有69个单元测试，并新增真实 MySQL/Redis/RocketMQ 正常链路 smoke test；缓存失效已完成 broker 停止/恢复故障注入，进程崩溃自动化仍待补充；
 - 已删除未使用的 Spring Cloud Alibaba BOM 和 `hutool-all`；保留的 Spring Cloud BOM 供 OpenFeign 使用；
 - 已删除未使用的缓存 Key、错误码和未赋值的响应 `traceId`；真正引入 TraceId 时应完成 HTTP/MQ 全链路透传；
 - 静态页面直接配置三个服务地址，缺少统一入口；
@@ -736,9 +737,9 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 目标：真正跑通一次研究任务，而不是只做聊天接口。
 
-- [ ] 新增 `xplanet-ai` Java 模块；
+- [x] 新增 `xplanet-ai` Java 模块；
 - [ ] 新增 `xplanet-agent` Python 服务；
-- [ ] 实现 `ai_task`、`ai_report`、基础 Outbox；
+- [x] 实现 `ai_task`、`ai_run`、来源/证据/报告模型和基础 Outbox；
 - [ ] 实现 Planner→Search→Reader→Writer→Critic；
 - [ ] RocketMQ 投递任务和返回结果；
 - [ ] Redis Stream + SSE 推送阶段进度；
@@ -804,8 +805,8 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 ### P0：最先实施
 
 1. `BASE-001`：已建立41个单元测试基线和可重复执行的真实中间件 smoke test；故障注入继续迭代；
-2. `AI-001`：创建 AI 任务状态机和数据库表；
-3. `AI-002`：实现 Transactional Outbox 和 Agent 任务消费；
+2. `AI-001`：已创建 AI 任务状态机、预算边界、用户级幂等和数据库表；
+3. `AI-002`：已实现 Transactional Outbox 请求/取消命令；Agent 幂等消费待下一阶段；
 4. `AI-003`：实现五节点 Agent 最小图；
 5. `AI-004`：实现来源、证据、引用关系；
 6. `AI-005`：实现 Redis Stream + SSE；
@@ -911,6 +912,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 | 版本 | 日期 | 变更 | 影响 |
 |---|---|---|---|
+| v2.5 | 2026-07-16 | 新增 `xplanet-ai` 8084 控制面、V005 十张 AI 任务/运行/证据/报告/成本/Outbox-Inbox 表、私有读写鉴权、用户级载荷幂等、预算上限、版本条件取消和可靠请求/取消命令；Docker 与 smoke 扩展为四服务 | Java 控制面已具备可验证的长任务治理基础；69项单测、实库迁移、跨用户拒绝、两条AI命令发送和三类Outbox零积压已通过；Python Agent仍明确为下一阶段 |
 | v2.4 | 2026-07-16 | 分离 RocketMQ 宿主机/容器 broker 配置；增加 Flyway V4 baseline 与自动迁移脚本、全 Docker 启动健康检查、可配置基础镜像仓库及 CI；实际完成全镜像构建和 smoke test | 新环境不再手工执行历史 SQL；混合与容器网络均获得可达 broker 地址；提交时自动拦截单测、Compose 或 PowerShell 语法回归 |
 | v2.3 | 2026-07-16 | 文章更新/删除与立即、延迟两条缓存失效 Outbox 同事务提交；新增带租约 relay、失败退避、L1/L2 幂等消费，并将 article 调度池扩为4线程 | MQ 故障和提交后进程崩溃不再永久丢失缓存失效；热榜刷新、点赞投影和缓存 relay 不再共用单调度线程 |
 | v2.2 | 2026-07-16 | interaction 点赞前通过轻量 OpenFeign 接口校验文章存在且未删除；新增依赖失败关闭、不存在文章零写入测试和真实冒烟断言 | 修复“关系已点赞但文章计数事件被拒绝”的状态分裂；取消点赞仍允许清理删除文章的历史关系 |

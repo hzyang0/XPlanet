@@ -18,6 +18,7 @@
         <module>xplanet-user</module>
         <module>xplanet-article</module>
         <module>xplanet-interaction</module>
+        <module>xplanet-ai</module>
     </modules>
 
     <parent>

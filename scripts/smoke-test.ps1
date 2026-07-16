@@ -1,10 +1,10 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  验证 XPlanet 本地三服务和点赞最终一致性链路。
+  验证 XPlanet 四个 Java 服务、点赞最终一致性和 AI 控制面可靠命令链路。
 
 .DESCRIPTION
-  运行前需启动 MySQL、Redis、RocketMQ 以及 8081/8082/8083 三个应用服务。
+  运行前需启动 MySQL、Redis、RocketMQ 以及 8081/8082/8083/8084 四个应用服务。
   脚本会登录演示账号，检查文章读接口，并对指定文章执行一次状态变化、幂等点赞
   和反向状态变化。最终会恢复原点赞状态和文章点赞数；已处理的 Outbox/投影审计记录会保留。
 
@@ -59,7 +59,7 @@ function Assert-BusinessSuccess($Response, [string]$Description) {
 }
 
 Write-Host ">>> 检查服务健康状态" -ForegroundColor Cyan
-$health = 8081, 8082, 8083 | ForEach-Object {
+$health = 8081, 8082, 8083, 8084 | ForEach-Object {
     $response = Invoke-RestMethod -Uri "http://localhost:$_/actuator/health" -TimeoutSec 5
     if ($response.status -ne "UP") {
         throw "服务端口 $_ 健康状态不是 UP"
@@ -76,6 +76,67 @@ if ([string]::IsNullOrWhiteSpace($login.data.token)) {
     throw "登录响应中没有 token"
 }
 $headers = @{ Authorization = "Bearer $($login.data.token)" }
+
+Write-Host ">>> 验证 AI 任务幂等创建、私有读取、取消和可靠 Outbox" -ForegroundColor Cyan
+$unauthenticatedAi = Invoke-RestMethod -Uri "http://localhost:8084/api/ai/tasks" -TimeoutSec 5
+if ($unauthenticatedAi.code -ne 2001) {
+    throw "未登录读取 AI 任务应返回业务码 2001，实际为 $($unauthenticatedAi.code)"
+}
+$aiKey = "smoke-$([Guid]::NewGuid().ToString('N'))"
+$aiBody = @{
+    question = "Explain the XPlanet Outbox reliability design"
+    maxSources = 3
+    maxToolCalls = 5
+    maxTokens = 4000
+    deadlineSeconds = 120
+} | ConvertTo-Json
+$aiHeaders = @{ Authorization = $headers.Authorization; "Idempotency-Key" = $aiKey }
+$aiCreated = Invoke-RestMethod -Method Post -Uri "http://localhost:8084/api/ai/tasks" `
+    -Headers $aiHeaders -ContentType "application/json; charset=utf-8" -Body $aiBody -TimeoutSec 10
+Assert-BusinessSuccess $aiCreated "创建 AI 任务"
+$aiDuplicate = Invoke-RestMethod -Method Post -Uri "http://localhost:8084/api/ai/tasks" `
+    -Headers $aiHeaders -ContentType "application/json; charset=utf-8" -Body $aiBody -TimeoutSec 10
+Assert-BusinessSuccess $aiDuplicate "重复创建 AI 任务"
+if ($aiDuplicate.data.id -ne $aiCreated.data.id) {
+    throw "相同幂等键重复请求产生了不同任务"
+}
+$conflictBody = @{ question = "A different request" } | ConvertTo-Json
+$aiConflict = Invoke-RestMethod -Method Post -Uri "http://localhost:8084/api/ai/tasks" `
+    -Headers $aiHeaders -ContentType "application/json; charset=utf-8" -Body $conflictBody -TimeoutSec 10
+if ($aiConflict.code -ne 4003) {
+    throw "相同幂等键用于不同请求应返回4003，实际为 $($aiConflict.code)"
+}
+$aiTask = Invoke-RestMethod -Uri "http://localhost:8084/api/ai/tasks/$($aiCreated.data.id)" `
+    -Headers $headers -TimeoutSec 10
+Assert-BusinessSuccess $aiTask "读取 AI 任务"
+$otherLoginBody = @{ username = "bob"; password = "password" } | ConvertTo-Json
+$otherLogin = Invoke-RestMethod -Method Post -Uri "http://localhost:8083/api/user/login" `
+    -ContentType "application/json; charset=utf-8" -Body $otherLoginBody -TimeoutSec 10
+Assert-BusinessSuccess $otherLogin "第二账号登录"
+$otherHeaders = @{ Authorization = "Bearer $($otherLogin.data.token)" }
+$otherRead = Invoke-RestMethod -Uri "http://localhost:8084/api/ai/tasks/$($aiCreated.data.id)" `
+    -Headers $otherHeaders -TimeoutSec 10
+if ($otherRead.code -ne 4001) {
+    throw "其他用户读取 AI 任务应返回业务码 4001，实际为 $($otherRead.code)"
+}
+Wait-Until {
+    [long](Invoke-SqlScalar "SELECT COUNT(*) FROM ai_outbox WHERE aggregate_id=$($aiCreated.data.id) AND event_type='AI_TASK_REQUESTED' AND status=2;") -eq 1
+} "AI任务请求 Outbox 发送"
+$aiCancelled = Invoke-RestMethod -Method Delete -Uri "http://localhost:8084/api/ai/tasks/$($aiCreated.data.id)" `
+    -Headers $headers -TimeoutSec 10
+Assert-BusinessSuccess $aiCancelled "取消 AI 任务"
+if ($aiCancelled.data.status -ne "CANCELLED") {
+    throw "取消后 AI 任务状态不是 CANCELLED"
+}
+Wait-Until {
+    [long](Invoke-SqlScalar "SELECT COUNT(*) FROM ai_outbox WHERE aggregate_id=$($aiCreated.data.id) AND event_type='AI_TASK_CANCELLED' AND status=2;") -eq 1
+} "AI任务取消 Outbox 发送"
+$aiCancelAgain = Invoke-RestMethod -Method Delete -Uri "http://localhost:8084/api/ai/tasks/$($aiCreated.data.id)" `
+    -Headers $headers -TimeoutSec 10
+Assert-BusinessSuccess $aiCancelAgain "重复取消 AI 任务"
+if ([long](Invoke-SqlScalar "SELECT COUNT(*) FROM ai_task WHERE user_id=$($login.data.userId) AND idempotency_key='$aiKey';") -ne 1) {
+    throw "AI 任务幂等键没有约束为单行"
+}
 
 $article = Invoke-RestMethod -Uri "http://localhost:8081/api/article/$ArticleId" -TimeoutSec 10
 Assert-BusinessSuccess $article "文章详情"
@@ -215,6 +276,11 @@ if ($unauthenticated.code -ne 2001) {
     NewOutboxEventsSent = $sentEvents
     NewProjectionEventsApplied = $appliedEvents
     UnauthenticatedWriteCode = $unauthenticated.code
+    AiTaskId = $aiCreated.data.id
+    AiIdempotencyVerified = ($aiDuplicate.data.id -eq $aiCreated.data.id)
+    AiPrivateReadCode = $unauthenticatedAi.code
+    AiCrossUserReadCode = $otherRead.code
+    AiTaskCancelled = ($aiCancelled.data.status -eq "CANCELLED")
 } | Format-List
 
 Write-Host ">>> XPlanet 冒烟测试通过" -ForegroundColor Green

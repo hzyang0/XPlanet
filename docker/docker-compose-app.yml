@@ -72,6 +72,26 @@ services:
     networks:
       - xp-net
 
+  ai:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.app
+      args:
+        MODULE: xplanet-ai
+        BASE_REGISTRY: ${DOCKER_BASE_REGISTRY:-docker.io/library}
+    container_name: xp-ai
+    restart: unless-stopped
+    environment:
+      MYSQL_HOST: mysql
+      REDIS_HOST: redis
+      ROCKETMQ_NS: rocketmq-namesrv:9876
+      TOKEN_SECRET: ${TOKEN_SECRET}
+      TOKEN_EXPIRE_SECONDS: ${TOKEN_EXPIRE_SECONDS:-86400}
+    ports:
+      - "8084:8084"
+    networks:
+      - xp-net
+
 # 复用基础设施 compose 创建的固定网络。
 networks:
   xp-net:
