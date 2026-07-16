@@ -1,6 +1,6 @@
 # XPlanet Research 整体优化改进方案
 
-> 文档状态：架构基线 v1.9（实施中）
+> 文档状态：架构基线 v2.0（实施中）
 > 基线日期：2026-07-16  
 > 适用范围：当前 XPlanet Java 项目及计划新增的 AI Agent 能力  
 > 当前阶段：只确定方案和实施顺序，不代表目标能力已经完成
@@ -94,7 +94,7 @@
 
 基础设施为 MySQL、Redis、RocketMQ，文章热点读使用 Caffeine + Redis 二级缓存，Redisson 用于缓存重建锁。
 
-仓库根 POM 当前不包含可运行的 `xplanet-gateway` 源模块；目录中只有历史 `target` 构建产物，不能把网关描述为当前已实现组件。
+仓库当前不包含 `xplanet-gateway` 源模块；历史编译产物已清理，不能把网关描述为当前已实现组件。
 
 ### 2.2 当前真实优势
 
@@ -134,13 +134,12 @@
 
 #### P2：清理和可维护性
 
-- 当前没有业务测试类，Maven 绿色只能证明编译；
-- Spring Cloud、Spring Cloud Alibaba BOM 当前没有实际依赖使用；
-- `hutool-all` 未在 Java 代码使用；
-- 存在未使用的缓存 Key、错误码和没有真正赋值的 `traceId`；
+- 当前已有41个单元测试，但仍缺真实 MySQL/Redis/RocketMQ 端到端故障测试；
+- 已删除未使用的 Spring Cloud Alibaba BOM 和 `hutool-all`；保留的 Spring Cloud BOM 供 OpenFeign 使用；
+- 已删除未使用的缓存 Key、错误码和未赋值的响应 `traceId`；真正引入 TraceId 时应完成 HTTP/MQ 全链路透传；
 - 静态页面直接配置三个服务地址，缺少统一入口；
-- 旧文档包含未复核的高 QPS、顺序消费、实时计数、时间衰减等表述；
-- 历史 `xplanet-gateway/target` 产物应在确认无用后清理，但不能把删除动作与功能改造混在一起。
+- 历史高 QPS 结果已标记为旧链路数据，新链路仍需重新压测；
+- 已清理历史 gateway 编译产物、重复启动脚本和与当前实现冲突的本地旧文档。
 
 ---
 
@@ -911,6 +910,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 | 版本 | 日期 | 变更 | 影响 |
 |---|---|---|---|
+| v2.0 | 2026-07-16 | 仓库瘦身：删除历史 gateway 编译产物、重复/失效启动验证文件和旧面试文档；移除未使用 Alibaba BOM、Hutool、错误码与空 traceId；同步项目级 xplanet-dev skill | 当前代码、文档、脚本和开发工作流只保留一套有效事实，减少依赖和历史残留干扰 |
 | v1.9 | 2026-07-16 | 根依赖管理及 user/article/interaction 统一切换到 `com.mysql:mysql-connector-j` 当前坐标 | 消除旧 `mysql:mysql-connector-java` relocation 警告，降低后续依赖解析兼容风险 |
 | v1.8 | 2026-07-16 | 完成 CUR-P1-02：缓存重建改用 Redisson watchdog 语义的 `tryLock(wait, unit)`，新增2个缓存测试并修正文档 | DB 回源超过原固定3秒租约时，锁不会因租约到期提前释放造成并发重建 |
 | v1.7 | 2026-07-16 | 完成 LIKE-001：`like_relation` 条件状态机与 Outbox 同事务、带租约 relay、唯一事件持久化 Inbox/delta、`SKIP LOCKED` 批量计数投影，并新增迁移脚本和17个测试 | MQ 失败、重复、乱序和实例在发送/投影窗口崩溃不再依赖 Redis 临时状态恢复；Redis 退出点赞正确性链路 |
