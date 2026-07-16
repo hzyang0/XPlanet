@@ -32,6 +32,11 @@ spring:
     host: ${REDIS_HOST:localhost}
     port: 6379
     password: ${REDIS_PWD:}
+  task:
+    scheduling:
+      pool:
+        size: 4
+      thread-name-prefix: xplanet-scheduling-
 
 rocketmq:
   name-server: ${ROCKETMQ_NS:localhost:9876}
@@ -44,6 +49,11 @@ like:
   projection:
     interval-ms: ${LIKE_PROJECTION_INTERVAL_MS:500}
     batch-size: ${LIKE_PROJECTION_BATCH_SIZE:1000}
+
+cache:
+  outbox:
+    publish-interval-ms: ${CACHE_OUTBOX_INTERVAL_MS:200}
+    batch-size: ${CACHE_OUTBOX_BATCH_SIZE:100}
 
 user-service:
   base-url: ${USER_SERVICE_URL:http://localhost:8083}
