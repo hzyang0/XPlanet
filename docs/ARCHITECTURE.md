@@ -35,7 +35,7 @@
 ### 2.2 击穿保护(L1+L2 都 miss)
 
 ```
-1. Redisson tryLock(article:rebuild:{id}, wait=200ms, lease=3s)
+1. Redisson tryLock(article:rebuild:{id}, wait=200ms)，不传显式 lease
 2. 抢到锁:
    2a. double-check L2(可能在等锁时已被别人回填)
    2b. 回源 DB → 序列化 JSON → 写 L2(TTL = 30min ± 5min 抖动) → 写 L1
@@ -44,7 +44,8 @@
    3b. 仍 miss → 直接回源 DB(降级,接受少量穿透)
 ```
 
-**为什么 lease=3s?** 留够回源 + 写缓存的余量;Redisson 看门狗会自动续期,真要执行超过 3s 也不会被强占。
+**为什么不传显式 lease?** 三参数 `tryLock(wait, lease, unit)` 到期会直接释放，不启用看门狗。
+当前使用两参数等待重载，让 Redisson watchdog 在持锁线程存活时续期，避免慢查询超过固定租约后第二个线程同时回源。
 
 ### 2.3 穿透保护
 
