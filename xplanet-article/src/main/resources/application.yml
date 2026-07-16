@@ -7,6 +7,8 @@ server:
     accept-count: 200
 
 security:
+  proxy:
+    trust-forwarded-headers: ${TRUST_FORWARDED_HEADERS:false}
   token:
     secret: ${TOKEN_SECRET:}
     issuer: xplanet
