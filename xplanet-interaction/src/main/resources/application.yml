@@ -33,6 +33,17 @@ like:
     publish-interval-ms: ${LIKE_OUTBOX_INTERVAL_MS:500}
     batch-size: ${LIKE_OUTBOX_BATCH_SIZE:100}
 
+article-service:
+  base-url: ${ARTICLE_SERVICE_URL:http://localhost:8081}
+
+feign:
+  client:
+    config:
+      article-service:
+        connect-timeout: 1000
+        read-timeout: 2000
+        logger-level: basic
+
 management:
   endpoints:
     web:

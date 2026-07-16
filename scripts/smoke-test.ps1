@@ -16,6 +16,7 @@
 #>
 param(
     [long]$ArticleId = 2,
+    [long]$InvalidArticleId = 999999999,
     [string]$Username = "alice",
     [string]$Password = "password",
     [string]$MysqlContainer = "xp-mysql",
@@ -80,6 +81,24 @@ $article = Invoke-RestMethod -Uri "http://localhost:8081/api/article/$ArticleId"
 Assert-BusinessSuccess $article "文章详情"
 $articleList = Invoke-RestMethod -Uri "http://localhost:8081/api/article/list?pageNum=1&pageSize=10" -TimeoutSec 10
 Assert-BusinessSuccess $articleList "文章列表"
+
+Write-Host ">>> 验证不存在文章不会写入点赞关系或 Outbox" -ForegroundColor Cyan
+$invalidRelationBefore = [long](Invoke-SqlScalar `
+    "SELECT COUNT(*) FROM like_relation WHERE user_id=$($login.data.userId) AND article_id=$InvalidArticleId;")
+$invalidOutboxBefore = [long](Invoke-SqlScalar `
+    "SELECT COUNT(*) FROM like_outbox WHERE user_id=$($login.data.userId) AND article_id=$InvalidArticleId;")
+$invalidLike = Invoke-RestMethod -Method Post -Uri "http://localhost:8082/api/like/$InvalidArticleId" `
+    -Headers $headers -TimeoutSec 10
+if ($invalidLike.code -ne 3001) {
+    throw "不存在文章点赞应返回业务码 3001，实际为 $($invalidLike.code)"
+}
+$invalidRelationAfter = [long](Invoke-SqlScalar `
+    "SELECT COUNT(*) FROM like_relation WHERE user_id=$($login.data.userId) AND article_id=$InvalidArticleId;")
+$invalidOutboxAfter = [long](Invoke-SqlScalar `
+    "SELECT COUNT(*) FROM like_outbox WHERE user_id=$($login.data.userId) AND article_id=$InvalidArticleId;")
+if ($invalidRelationAfter -ne $invalidRelationBefore -or $invalidOutboxAfter -ne $invalidOutboxBefore) {
+    throw "不存在文章点赞错误地产生了关系或 Outbox 记录"
+}
 
 $originalStatusText = Invoke-SqlScalar `
     "SELECT COALESCE(MAX(status),0) FROM like_relation WHERE user_id=$($login.data.userId) AND article_id=$ArticleId;"
@@ -169,6 +188,7 @@ if ($unauthenticated.code -ne 2001) {
     OriginalLikeStatusRestored = ($finalStatus -eq $originalStatus)
     LikeCountRestored = ($finalCount -eq $baselineCount)
     DuplicateLikeIgnored = $true
+    MissingArticleRejected = ($invalidLike.code -eq 3001)
     NewOutboxEventsSent = $sentEvents
     NewProjectionEventsApplied = $appliedEvents
     UnauthenticatedWriteCode = $unauthenticated.code
