@@ -16,6 +16,7 @@ import java.io.Serializable;
 public class ArticleChangeMessage implements Serializable {
     private static final long serialVersionUID = 1L;
 
+    private String eventId;
     private Long articleId;
     /** UPDATE / DELETE / INSERT */
     private String op;

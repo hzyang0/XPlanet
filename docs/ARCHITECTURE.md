@@ -60,16 +60,18 @@ L2 TTL = 30min 基线 + (0~5min) 随机抖动。同一批写入的 key 不会同
 
 ## 3. 缓存一致性(写路径)
 
-### 3.1 Cache Aside + 延迟双删
+### 3.1 Cache Aside + 可靠失效 Outbox
 
 ```
 事务边界:
   BEGIN
     UPDATE article SET ... WHERE id = ?
     invalidate(L1 + L2)          ← 第一删
+    INSERT article_change_outbox ← 立即失效事件
+    INSERT article_change_outbox ← 1s 后可发送的延迟失效事件
   COMMIT
-  publish ArticleChangeMessage    ← 广播给其他实例清 L1
-  async sleep 1s → invalidate L2  ← 第二删,杀死竞态期间的旧值回填
+  relay → publish ArticleChangeMessage
+  consumers → invalidate(L1 + L2)
 ```
 
 **为什么需要第二删?**
@@ -79,7 +81,8 @@ T1(读): 读 cache miss → 查 DB(拿到旧值 V0) → 准备写回 cache
 T2(写): 更新 DB(V1) → 删 cache
 T1(继续): 把 V0 写入 cache  ← 脏数据
 ```
-延迟 1s 再删一次,把 T1 写入的 V0 杀掉。
+延迟 1s 再删一次,把 T1 写入的 V0 杀掉。延迟不再依赖 JVM 中 `sleep` 的临时任务，
+而是由 `next_retry_time` 持久化调度；MQ 暂停或实例崩溃后，relay 可以继续发送。
 
 延迟时长 = max(回源耗时 + 写缓存耗时) × 安全系数。本项目设 1s 是经验值。
 
@@ -88,8 +91,8 @@ T1(继续): 把 V0 写入 cache  ← 脏数据
 L1 是本进程的 Caffeine,各实例独立。写发生在实例 A 时,只有 A 清了自己的 L1,
 B/C/D 的 L1 还是旧值。
 
-通过 `RocketMQMessageListener(messageModel = BROADCASTING)` 让所有实例都收到消息,
-各自清自己的 L1。**广播模式不会重复消费同一条消息(每个实例一份)。**
+通过 `RocketMQMessageListener(messageModel = BROADCASTING)` 让所有在线实例都收到消息,
+各自清自己的 L1，并幂等删除共享 L2。Outbox 采用至少一次投递，重复消息通过缓存删除的天然幂等吸收。
 
 ## 4. 点赞状态机、Outbox 与批量投影
 

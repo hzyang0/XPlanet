@@ -100,6 +100,28 @@ if ($invalidRelationAfter -ne $invalidRelationBefore -or $invalidOutboxAfter -ne
     throw "不存在文章点赞错误地产生了关系或 Outbox 记录"
 }
 
+Write-Host ">>> 验证文章更新的可靠缓存失效 Outbox" -ForegroundColor Cyan
+$cacheOutboxBaselineId = [long](Invoke-SqlScalar `
+    "SELECT COALESCE(MAX(id),0) FROM article_change_outbox;")
+$articleUpdateBody = @{
+    title = $article.data.title
+    content = $article.data.content
+    tags = $article.data.tags
+} | ConvertTo-Json
+$articleUpdate = Invoke-RestMethod -Method Put -Uri "http://localhost:8081/api/article/$ArticleId" `
+    -Headers $headers -ContentType "application/json; charset=utf-8" `
+    -Body $articleUpdateBody -TimeoutSec 10
+Assert-BusinessSuccess $articleUpdate "文章更新"
+Wait-Until {
+    [long](Invoke-SqlScalar `
+        "SELECT COUNT(*) FROM article_change_outbox WHERE id>$cacheOutboxBaselineId AND article_id=$ArticleId AND status=2;") -eq 2
+} "文章缓存立即/延迟失效事件发送"
+$cacheOutboxSent = [long](Invoke-SqlScalar `
+    "SELECT COUNT(*) FROM article_change_outbox WHERE id>$cacheOutboxBaselineId AND article_id=$ArticleId AND operation='UPDATE' AND status=2;")
+if ($cacheOutboxSent -ne 2) {
+    throw "文章更新应产生两条已发送缓存失效事件，实际为 $cacheOutboxSent"
+}
+
 $originalStatusText = Invoke-SqlScalar `
     "SELECT COALESCE(MAX(status),0) FROM like_relation WHERE user_id=$($login.data.userId) AND article_id=$ArticleId;"
 $originalStatus = [int]$originalStatusText
@@ -189,6 +211,7 @@ if ($unauthenticated.code -ne 2001) {
     LikeCountRestored = ($finalCount -eq $baselineCount)
     DuplicateLikeIgnored = $true
     MissingArticleRejected = ($invalidLike.code -eq 3001)
+    CacheInvalidationEventsSent = $cacheOutboxSent
     NewOutboxEventsSent = $sentEvents
     NewProjectionEventsApplied = $appliedEvents
     UnauthenticatedWriteCode = $unauthenticated.code
