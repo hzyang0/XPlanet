@@ -196,6 +196,13 @@ const $ = id => document.getElementById(id);
 const articleBase = () => $("articleBase").value.replace(/\/$/, "");
 const likeBase = () => $("likeBase").value.replace(/\/$/, "");
 const uid = () => $("uid") ? $("uid").value : "1";
+const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, ch => ({
+  "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"
+})[ch]);
+const safeInteger = (value, fallback = 0) => {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0 ? number : fallback;
+};
 let TOKEN = null;
 async function doLogin(){
   const username = $("loginUser").value.trim();
@@ -238,7 +245,7 @@ async function getArticle(id){
 // 加载列表(真实分页接口)
 let curPage = 1;
 async function loadList(page){
-  curPage = page || 1;
+  curPage = Math.max(1, safeInteger(page, 1));
   const box = $("articleList");
   try {
     const res = await fetch(`${articleBase()}/api/article/list?pageNum=${curPage}&pageSize=10`);
@@ -248,20 +255,31 @@ async function loadList(page){
       box.innerHTML = '<div style="color:#c2410c;font-family:var(--mono);font-size:12px">暂无文章。请确认后端 article(8081)已启动、数据库已初始化。</div>';
       return;
     }
-    box.innerHTML = pg.records.map(a => `
-      <div class="article-card" onclick="showDetail(${a.id})">
-        <h3>${a.title}</h3>
-        <div class="meta"><span>作者 ${a.authorName||('用户'+a.authorId)}</span><span>♥ ${a.likeCount||0}</span><span>👁 ${a.viewCount||0}</span></div>
-        <div style="font-size:14px;color:#5c5c5c;margin-top:6px">${a.summary||''}</div>
-        <div class="tags">${(a.tags||'').split(',').filter(Boolean).map(t=>`<span class="tag">${t}</span>`).join('')}</div>
-      </div>`).join('')
+    const pageNum = Math.max(1, safeInteger(pg.pageNum, curPage));
+    const pages = Math.max(1, safeInteger(pg.pages, 1));
+    const total = safeInteger(pg.total, 0);
+    box.innerHTML = pg.records.map(a => {
+      const articleId = safeInteger(a.id, 0);
+      if (articleId <= 0) return '';
+      const authorId = safeInteger(a.authorId, 0);
+      const authorName = a.authorName || ('用户' + authorId);
+      const tags = String(a.tags || '').split(',').filter(Boolean)
+        .map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
+      return `
+      <div class="article-card" onclick="showDetail(${articleId})">
+        <h3>${escapeHtml(a.title)}</h3>
+        <div class="meta"><span>作者 ${escapeHtml(authorName)}</span><span>♥ ${safeInteger(a.likeCount)}</span><span>👁 ${safeInteger(a.viewCount)}</span></div>
+        <div style="font-size:14px;color:#5c5c5c;margin-top:6px">${escapeHtml(a.summary)}</div>
+        <div class="tags">${tags}</div>
+      </div>`;
+    }).join('')
       + `<div style="display:flex;gap:10px;align-items:center;justify-content:center;margin-top:16px;font-family:var(--mono);font-size:12px">
            <button class="demo-btn" style="width:auto;padding:6px 14px" onclick="loadList(${curPage-1})" ${curPage<=1?'disabled':''}>上一页</button>
-           <span>第 ${pg.pageNum} / ${pg.pages} 页 · 共 ${pg.total} 篇</span>
-           <button class="demo-btn" style="width:auto;padding:6px 14px" onclick="loadList(${curPage+1})" ${curPage>=pg.pages?'disabled':''}>下一页</button>
+           <span>第 ${pageNum} / ${pages} 页 · 共 ${total} 篇</span>
+           <button class="demo-btn" style="width:auto;padding:6px 14px" onclick="loadList(${curPage+1})" ${curPage>=pages?'disabled':''}>下一页</button>
          </div>`;
   } catch(e){
-    box.innerHTML = '<div style="color:#c2410c;font-family:var(--mono);font-size:12px">连接失败:'+e.message+'<br>请确认后端已启动。</div>';
+    box.innerHTML = '<div style="color:#c2410c;font-family:var(--mono);font-size:12px">连接失败:'+escapeHtml(e.message)+'<br>请确认后端已启动。</div>';
   }
 }
 
@@ -299,11 +317,15 @@ async function loadComments(articleId){
 }
 function renderComment(c, isChild){
   const children = (c.children||[]).map(ch => renderComment(ch, true)).join('');
+  const userId = safeInteger(c.userId, 0);
+  const commentId = safeInteger(c.id, 0);
+  const userName = c.userName || ('用户' + userId);
+  const createTime = String(c.createTime || '').replace('T',' ').slice(0,16);
   return `<div style="padding:10px 0;${isChild?'margin-left:24px;border-left:2px solid var(--line);padding-left:12px':'border-bottom:1px solid var(--line)'}">
-    <div style="font-size:13px"><b>${c.userName||('用户'+c.userId)}</b>
-      <span style="color:#999;font-family:var(--mono);font-size:11px"> · ${(c.createTime||'').replace('T',' ').slice(0,16)}</span></div>
-    <div style="font-size:14px;margin:4px 0">${c.content}</div>
-    ${!isChild?`<button onclick="replyTo(${c.id})" style="font-size:11px;color:var(--accent);background:none;border:none;cursor:pointer;font-family:var(--mono)">回复</button>`:''}
+    <div style="font-size:13px"><b>${escapeHtml(userName)}</b>
+      <span style="color:#999;font-family:var(--mono);font-size:11px"> · ${escapeHtml(createTime)}</span></div>
+    <div style="font-size:14px;margin:4px 0">${escapeHtml(c.content)}</div>
+    ${!isChild && commentId > 0?`<button onclick="replyTo(${commentId})" style="font-size:11px;color:var(--accent);background:none;border:none;cursor:pointer;font-family:var(--mono)">回复</button>`:''}
     ${children}
   </div>`;
 }
@@ -388,8 +410,8 @@ async function demoConsistency(){
     });
     const after = await getArticle(id);
     out.innerHTML =
-      `<span class="hl">已更新文章 #${id}</span>\n` +
-      `新标题: ${after.title}\n` +
+      `<span class="hl">已更新文章 #${safeInteger(id)}</span>\n` +
+      `新标题: ${escapeHtml(after.title)}\n` +
       `<span class="dim">更新时删了缓存,这次读到的是最新值。\n说明 Cache Aside + 双删生效。\n回列表可见标题已变。</span>`;
   } catch(e){ out.textContent = "失败:"+e.message; }
 }
@@ -401,14 +423,18 @@ async function loadHot(){
     const json = await res.json();
     const list = json.data || [];
     if (list.length === 0){ box.innerHTML = '<div style="color:var(--ink-soft);font-family:var(--mono);font-size:12px">暂无热门(等定时任务刷新,约 1 分钟)</div>'; return; }
-    box.innerHTML = list.map((a, i) => `
-      <div class="article-card" style="padding:12px 16px;margin-bottom:8px" onclick="showDetail(${a.id})">
+    box.innerHTML = list.map((a, i) => {
+      const articleId = safeInteger(a.id, 0);
+      if (articleId <= 0) return '';
+      return `
+      <div class="article-card" style="padding:12px 16px;margin-bottom:8px" onclick="showDetail(${articleId})">
         <div style="display:flex;align-items:baseline;gap:10px">
           <span style="font-family:var(--mono);font-size:14px;color:var(--accent);font-weight:700">${String(i+1).padStart(2,'0')}</span>
-          <h3 style="font-size:15px;flex:1;margin:0">${a.title}</h3>
-          <span style="font-family:var(--mono);font-size:11px;color:var(--ink-soft)">♥ ${a.likeCount||0}</span>
+          <h3 style="font-size:15px;flex:1;margin:0">${escapeHtml(a.title)}</h3>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--ink-soft)">♥ ${safeInteger(a.likeCount)}</span>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch(e){ box.innerHTML = '<div style="color:var(--ink-soft);font-family:var(--mono);font-size:12px">热门加载失败</div>'; }
 }
 
