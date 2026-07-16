@@ -1,6 +1,7 @@
 package com.xplanet.user.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.xplanet.api.vo.UserProfileVO;
 import com.xplanet.common.auth.TokenUtil;
 import com.xplanet.common.exception.BizException;
 import com.xplanet.common.response.ErrorCode;
@@ -22,10 +23,15 @@ public class UserController {
     private final UserMapper userMapper;
 
     @GetMapping("/{id}")
-    public R<User> get(@PathVariable Long id) {
+    public R<UserProfileVO> get(@PathVariable Long id) {
         User u = userMapper.selectById(id);
         if (u == null) throw new BizException(ErrorCode.USER_NOT_FOUND);
-        return R.ok(u);
+        UserProfileVO profile = new UserProfileVO();
+        profile.setId(u.getId());
+        profile.setUsername(u.getUsername());
+        profile.setNickname(u.getNickname());
+        profile.setAvatar(u.getAvatar());
+        return R.ok(profile);
     }
 
     /**

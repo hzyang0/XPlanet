@@ -22,6 +22,7 @@ services:
       MYSQL_HOST: mysql
       REDIS_HOST: redis
       ROCKETMQ_NS: rocketmq-namesrv:9876
+      USER_SERVICE_URL: http://user:8083
     ports:
       - "8081:8081"
     networks:

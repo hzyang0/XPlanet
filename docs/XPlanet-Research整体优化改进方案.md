@@ -1,6 +1,6 @@
 # XPlanet Research 整体优化改进方案
 
-> 文档状态：架构基线 v1.0（已接受，待实施）  
+> 文档状态：架构基线 v1.1（实施中）
 > 基线日期：2026-07-16  
 > 适用范围：当前 XPlanet Java 项目及计划新增的 AI Agent 能力  
 > 当前阶段：只确定方案和实施顺序，不代表目标能力已经完成
@@ -123,7 +123,7 @@
 
 | 编号 | 问题 | 影响 | 目标处理 |
 |---|---|---|---|
-| CUR-P1-01 | `UserClient` 直接 `new RestTemplate()`，没有显式超时 | 依赖故障可能拖住业务线程 | OpenFeign 或受管 HTTP Client + 超时/熔断/TraceId |
+| CUR-P1-01 | `UserClient` 直接 `new RestTemplate()`，没有显式超时 | 依赖故障可能拖住业务线程 | 已完成类型化 OpenFeign、连接/读取超时和 Docker 地址；熔断/TraceId 待后续完成 |
 | CUR-P1-02 | 缓存重建锁显式 lease=3s，旧文档却称看门狗续期 | 文档与实际锁语义不符 | 使用看门狗或基于实测设置租约，并修正文档 |
 | CUR-P1-03 | 文章事务内先删缓存，提交后的 MQ 发送与第二删串联 | MQ 抛异常时第二删可能不执行；回滚会造成无效删除 | Outbox/延迟消息，拆开失败边界 |
 | CUR-P1-04 | 限流信任任意 `X-Forwarded-For` | 客户端可伪造 IP | 仅信任网关注入头，服务直连使用 RemoteAddr |
@@ -764,7 +764,8 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 - [ ] 缓存失效改为可靠事件和可重试延迟删除；
 - [ ] 修正 Redisson 锁语义；
 - [ ] 用户密码和 Token 安全改造；
-- [ ] OpenFeign/HTTP Client 超时、熔断和 TraceId；
+- [x] 类型化 OpenFeign、连接/读取超时和 Docker 服务地址；
+- [ ] 远程调用熔断、错误解码和 TraceId 透传；
 - [ ] 评论约束与分页；
 - [ ] 浏览量和时间衰减热榜；
 - [ ] 修复前端 XSS。
@@ -906,6 +907,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 | 版本 | 日期 | 变更 | 影响 |
 |---|---|---|---|
+| v1.1 | 2026-07-16 | 完成 CUR-P1-01 第一阶段：类型化用户服务契约、OpenFeign 超时、Docker 地址和4个单元测试 | article→user 不再使用裸 RestTemplate，降级值不写缓存 |
 | v1.0 | 2026-07-16 | 建立 XPlanet Research 总体方案；确定 Java + Python、Agent 工作流、MQ/SSE、Outbox/Inbox、点赞投影和分阶段计划 | 作为后续实施和文档同步基线 |
 
 ---
