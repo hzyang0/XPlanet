@@ -1,7 +1,7 @@
 package com.xplanet.article.config;
 
 import com.xplanet.common.auth.AuthInterceptor;
-import org.springframework.context.annotation.Bean;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -14,17 +14,15 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * 体现「读写分离的权限控制」——浏览不设门槛,写操作必须有身份。
  */
 @Configuration
+@RequiredArgsConstructor
 public class WebConfig implements WebMvcConfigurer {
 
-    @Bean
-    public AuthInterceptor authInterceptor() {
-        return new AuthInterceptor();
-    }
+    private final AuthInterceptor authInterceptor;
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         // 拦截所有 article / comment 接口;拦截器内部对 GET(读)放行,只对写操作鉴权
-        registry.addInterceptor(authInterceptor())
+        registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/api/article/**", "/api/comment/**");
     }
 }

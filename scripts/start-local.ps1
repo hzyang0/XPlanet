@@ -19,6 +19,10 @@ if (-not (Get-Command mvn -ErrorAction SilentlyContinue)) {
     Write-Error "未找到 mvn。请先安装 Maven 并加入 PATH。"
 }
 
+if ([string]::IsNullOrWhiteSpace($env:TOKEN_SECRET) -or $env:TOKEN_SECRET.Length -lt 32) {
+    Write-Error '请先设置至少32字符的 TOKEN_SECRET，例如：$env:TOKEN_SECRET="replace-with-a-random-secret-at-least-32-bytes"'
+}
+
 $env:MYSQL_HOST = "localhost"
 $env:MYSQL_USER = "root"
 $env:MYSQL_PWD = "root123"

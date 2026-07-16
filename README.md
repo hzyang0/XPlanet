@@ -67,6 +67,14 @@
 
 推荐:中间件用 Docker,3 个服务用 IDE / 命令行跑(便于断点调试)。
 
+先设置所有服务共享的 JWT 签名密钥（至少32字符，实际使用请生成随机值）：
+
+```powershell
+$env:TOKEN_SECRET="replace-with-a-random-secret-at-least-32-bytes"
+```
+
+Docker Compose 用户可复制 `.env.example` 为 `.env` 后替换其中的示例值。
+
 ### 1. 启动中间件
 
 ```bash
@@ -76,6 +84,8 @@ docker compose -f docker/docker-compose-infra.yml ps
 ```
 
 启动 MySQL(3306,自动建表+测试数据)、Redis(6379)、RocketMQ(namesrv 9876 + broker 10911)。
+如果复用旧 MySQL 数据卷，请在启动新版 user 服务前执行一次
+[`sql/migrations/V002__add_user_password_hash.sql`](sql/migrations/V002__add_user_password_hash.sql)；新数据卷会由 `init.sql` 直接创建字段。
 
 ### 2. 编译
 
@@ -105,7 +115,7 @@ curl "http://localhost:8081/api/article/list?pageNum=1&pageSize=10"
 
 # 登录拿 token(写操作需要)
 TOKEN=$(curl -s -X POST -H "Content-Type: application/json" \
-  -d '{"username":"alice"}' http://localhost:8083/api/user/login \
+  -d '{"username":"alice","password":"password"}' http://localhost:8083/api/user/login \
   | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
 
 # 点赞(带 token,异步落库)
@@ -117,6 +127,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 ```
 
 或直接打开 `xplanet-web/index.html`:先在顶部用用户名(alice/bob)登录,再操作。
+本地初始化账号 `alice`、`bob`、`demo` 的演示密码均为 `password`，数据库中只保存 bcrypt 哈希。
 
 ## 性能测试
 
@@ -150,8 +161,8 @@ xplanet/
 
 - 中间件单机(Redis/MySQL/RocketMQ),未做集群/哨兵/主从——这是**高可用**演进项,
   与「应用可水平扩展」是两回事(应用层已按无状态多实例设计)。见 `docs/HA-AND-DEGRADE.md`
-- Token 鉴权是简化的自实现 HMAC 签名(JWT 简化版),生产应用成熟 JWT 库 + 密钥管理
-- 登录未校验密码(demo 聚焦鉴权链路),生产需 BCrypt 校验
+- Token 使用标准 JWT/JWS 库签发和校验，签名密钥通过 `TOKEN_SECRET` 外部注入
+- 登录使用 Spring PasswordEncoder 校验 bcrypt 哈希；演示账号共用初始密码，仅用于本地数据
 - 点赞计数批量合并落库,极端情况(flush 前实例崩)靠 Redis 共享缓冲 + 明细表唯一约束兜底
 
 这些是有意识的取舍,不是不知道,面试时可展开聊改造方案。

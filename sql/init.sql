@@ -6,6 +6,7 @@ DROP TABLE IF EXISTS `user`;
 CREATE TABLE `user` (
     `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `username`    VARCHAR(64)  NOT NULL,
+    `password_hash` VARCHAR(100) NOT NULL,
     `nickname`    VARCHAR(64)  NOT NULL DEFAULT '',
     `avatar`      VARCHAR(255) NOT NULL DEFAULT '',
     `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -58,10 +59,11 @@ CREATE TABLE `comment` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评论表';
 
 -- 测试数据
-INSERT INTO `user` (`id`, `username`, `nickname`) VALUES
-(1, 'alice', 'Alice'),
-(2, 'bob',   'Bob'),
-(100, 'demo', 'Demo User');
+-- 本地演示账号的初始密码均为 password；数据库只保存 bcrypt 哈希。
+INSERT INTO `user` (`id`, `username`, `password_hash`, `nickname`) VALUES
+(1, 'alice', '{bcrypt}$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG', 'Alice'),
+(2, 'bob',   '{bcrypt}$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG', 'Bob'),
+(100, 'demo', '{bcrypt}$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG', 'Demo User');
 
 INSERT INTO `article` (`id`, `author_id`, `title`, `content`, `tags`) VALUES
 (1, 1, 'Caffeine + Redis 二级缓存实战', '本文介绍如何构建抗热点的二级缓存架构...', 'cache,redis,caffeine'),
