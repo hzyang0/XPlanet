@@ -55,9 +55,8 @@ public class ArticleCacheManager {
     private static final long REDIS_TTL_JITTER_SEC = 5 * 60;
     private static final long EMPTY_TTL_SEC = 60;
 
-    /** 分布式锁等待 / 持有时间 */
+    /** 分布式锁等待时间；不显式设置 lease，让 Redisson watchdog 自动续期。 */
     private static final long LOCK_WAIT_MS = 200;
-    private static final long LOCK_LEASE_MS = 3000;
 
     @PostConstruct
     public void init() {
@@ -101,7 +100,7 @@ public class ArticleCacheManager {
         RLock lock = redisson.getLock(CacheKeys.articleRebuildLock(articleId));
         boolean locked = false;
         try {
-            locked = lock.tryLock(LOCK_WAIT_MS, LOCK_LEASE_MS, TimeUnit.MILLISECONDS);
+            locked = lock.tryLock(LOCK_WAIT_MS, TimeUnit.MILLISECONDS);
             if (!locked) {
                 // 抢锁失败: 等待后再次尝试读 L2(可能已被持锁线程回填)
                 Thread.sleep(50);
