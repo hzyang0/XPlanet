@@ -1,6 +1,6 @@
 # XPlanet
 
-> 面向开发者的研究与社区平台：已完成高并发社区底座和 AI 任务控制面，正在接入可追溯 Agent 执行闭环。
+> 面向开发者的可追溯研究与社区平台：高并发社区底座、Agent 工作流、人工审核和幂等发布已形成首个可运行闭环。
 
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.18-brightgreen.svg)](https://spring.io/projects/spring-boot)
@@ -33,7 +33,11 @@
 **AI 研究控制面（当前已实现）**
 - **任务状态与请求幂等**：`xplanet-ai` 管理私有研究任务、运行实例、预算上限和版本条件状态迁移
 - **可靠长任务命令**：任务/运行/Outbox 同事务提交，带租约 relay 向 RocketMQ 投递请求与取消命令
-- **可追溯数据模型**：已建立来源、证据、引用、报告版本、模型用量和消费 Inbox 表；Python Agent 执行与进度流将在下一阶段接入
+- **可追溯 Agent 图**：`xplanet-agent` 用 LangGraph 执行输入校验、规划、研究、证据整理、写作和 Critic，工具次数、来源数和总超时均有上限
+- **证据与进度闭环**：来源、证据、引用和报告在同一事务校验落库；步骤进度写 Redis Stream，并由 `xplanet-ai` 通过 SSE 输出
+- **Human-in-the-loop**：报告必须由任务所有者确认，随后通过内部 OpenFeign 调用幂等发布为文章；重复确认返回同一文章
+
+> 当前 Agent 使用离线确定性资料提供器，用于验证编排、可靠性和可追溯闭环；尚未接入真实搜索和大模型，不能把演示报告描述为实时互联网研究结果。
 
 > 刻意没有引入网关、注册中心、分布式事务、监控全家桶等——在这个业务规模下属于过度设计。
 > 高可用(集群/哨兵/多实例)作为演进方向写在 [`docs/HA-AND-DEGRADE.md`](docs/HA-AND-DEGRADE.md),按需扩展。
@@ -42,18 +46,15 @@
 ## 架构
 
 ```
-              ┌──────────────┐  ┌──────────────┐  ┌──────────┐  ┌──────────────┐
-   前端演示页 ─┤ Article 8081 │  │Interaction   │  │ User     │  │ AI 8084      │
-              │ 文章+二级缓存 │  │  8082 点赞    │  │ 8083     │  │任务+报告模型  │
-              └──────┬───────┘  └──────┬───────┘  └────┬─────┘  └──────┬───────┘
-                     │                 │               │               │
-            ┌────────┴─────────────────┴───────────────┴───────────────┘
-            │
-     ┌──────┴───────┐   ┌──────────┐   ┌─────────────┐
-     │ MySQL        │   │  Redis   │   │  RocketMQ   │
-     │ (主数据)      │   │(L2缓存+  │   │(点赞削峰 +   │
-     │              │   │ 锁+限流) │   │ L1广播失效) │
-     └──────────────┘   └──────────┘   └─────────────┘
+ 用户/演示页 ──→ Article 8081 / Interaction 8082 / User 8083 / AI 8084
+                    │              │              │          │
+                    └──────────────┴──────────────┴──────────┼──→ MySQL
+                                                           ├──→ Redis
+ AI Outbox ──→ RocketMQ ──→ AI Java Consumer ──HTTP──→ Agent 8000
+                                                           │
+                  来源/证据/报告 ←──事务落库── AI 8084 ←───┘
+                  浏览器进度     ←──── SSE ─── Redis Stream
+                  人工确认       ──→ AI ──OpenFeign──→ Article 幂等发布
 ```
 
 详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
@@ -67,7 +68,8 @@
 | `xplanet-article` | 8081 | 文章服务 | **二级缓存、延迟双删、批量消费点赞落库、列表分页、评论、限流、调用 user 服务** |
 | `xplanet-interaction` | 8082 | 点赞服务 | **文章有效性校验、关系状态机、Transactional Outbox、可恢复 MQ relay** |
 | `xplanet-user` | 8083 | 用户服务 | 用户查询、bcrypt 登录与 JWT 签发 |
-| `xplanet-ai` | 8084 | AI 控制面 | **私有任务、请求幂等、预算、运行记录、证据/报告模型、可靠命令 Outbox** |
+| `xplanet-ai` | 8084 | AI 控制面 | **私有任务、请求幂等、预算、可靠命令、Agent 调度、结果事务落库、SSE、审核发布** |
+| `xplanet-agent` | 8000（仅内部） | Python 执行面 | **LangGraph 有界工作流、取消检查、来源/证据/引用生成、进度回调** |
 
 ## 快速开始
 
@@ -79,6 +81,7 @@
 
 ```powershell
 $env:TOKEN_SECRET="replace-with-a-random-secret-at-least-32-bytes"
+$env:AGENT_INTERNAL_TOKEN=$env:TOKEN_SECRET
 ```
 
 Docker Compose 用户可复制 `.env.example` 为 `.env` 后替换其中的示例值。
@@ -99,7 +102,17 @@ Docker Compose 用户可复制 `.env.example` 为 `.env` 后替换其中的示�
 mvn -DskipTests clean install
 ```
 
-#### 3. 启动 4 个 Java 服务
+#### 3. 启动 Python Agent 和 4 个 Java 服务
+
+先在一个终端启动内部 Agent：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".\xplanet-agent[test]"
+$env:AGENT_INTERNAL_TOKEN=$env:TOKEN_SECRET
+$env:AI_CONTROL_URL="http://localhost:8084"
+.\.venv\Scripts\python.exe -m uvicorn xplanet_agent.api:app --host 0.0.0.0 --port 8000
+```
 
 IDEA 直接 Run:`ArticleApplication`(8081)、`InteractionApplication`(8082)、`UserApplication`(8083)、`AiApplication`(8084)。
 
@@ -136,14 +149,14 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 或直接打开 `xplanet-web/index.html`:先在顶部用用户名(alice/bob)登录,再操作。
 本地初始化账号 `alice`、`bob`、`demo` 的演示密码均为 `password`，数据库中只保存 bcrypt 哈希。
 
-三个服务与中间件都启动后，可执行可重复的端到端冒烟测试：
+全部服务与中间件都启动后，可执行可重复的端到端冒烟测试：
 
 ```powershell
 .\scripts\smoke-test.ps1
 ```
 
-脚本会验证健康检查、登录、AI 任务私有读取/幂等/预算/取消命令、文章查询、可靠缓存失效 Outbox、重复点赞幂等、MQ 消费、持久化计数投影和未登录拦截，
-并在结束时恢复原点赞状态和文章计数。RocketMQ 冷启动首次建立消费者订阅可能需要几十秒，脚本默认等待上限为 90 秒。
+脚本会验证健康检查、登录、AI 任务私有读取/幂等/跨用户隔离、Agent 执行、7 个进度事件、来源—证据—引用闭包、人工审核、重复发布幂等和取消，
+同时覆盖文章查询、可靠缓存失效 Outbox、重复点赞幂等、MQ 消费、持久化计数投影和未登录拦截。脚本会恢复原点赞状态和文章计数；研究任务和发布文章作为验收记录保留。
 
 ### 方式二：全 Docker 模式（演示推荐）
 
@@ -173,7 +186,8 @@ xplanet/
 ├── xplanet-article/         # 文章服务 ★ 核心
 ├── xplanet-interaction/     # 点赞服务 ★ 核心
 ├── xplanet-user/            # 用户服务
-├── xplanet-ai/              # AI 任务控制面（Agent Worker 下一阶段接入）
+├── xplanet-ai/              # AI 任务控制面、SSE、审核和发布编排
+├── xplanet-agent/           # Python LangGraph Agent 执行面
 ├── xplanet-web/             # 演示前端
 ├── docker/
 │   ├── docker-compose-infra.yml   # 中间件(本地混合模式用这个)
@@ -199,7 +213,7 @@ xplanet/
 - Token 使用标准 JWT/JWS 库签发和校验，签名密钥通过 `TOKEN_SECRET` 外部注入
 - 登录使用 Spring PasswordEncoder 校验 bcrypt 哈希；演示账号共用初始密码，仅用于本地数据
 - 点赞以 `like_relation` 为事实源,通过 Outbox 至少一次投递；消费端唯一事件表和事务批量投影吸收重复并支持崩溃恢复
-- AI 目前完成 Java 控制面和可追溯数据模型；尚未声称已经完成真实检索、模型调用、报告生成或 Agent 恢复
+- AI 已完成离线确定性 Agent 的初步闭环；真实检索、模型调用、持久化 checkpoint、故障恢复和质量评测仍是下一阶段
 
 这些是有意识的取舍,不是不知道,面试时可展开聊改造方案。
 

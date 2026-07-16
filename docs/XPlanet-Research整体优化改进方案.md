@@ -1,9 +1,9 @@
 # XPlanet Research 整体优化改进方案
 
-> 文档状态：架构基线 v2.5（实施中）
+> 文档状态：架构基线 v2.6（实施中）
 > 基线日期：2026-07-16  
 > 适用范围：当前 XPlanet Java 项目及计划新增的 AI Agent 能力  
-> 当前阶段：Phase 0 可信基线与后端首轮可靠性整改已完成，开始实施 AI 最小业务闭环
+> 当前阶段：Phase 1 AI 最小业务闭环已完成，开始实施 Agent 可靠性与质量
 
 ## 0. 文档规则
 
@@ -90,7 +90,8 @@
 | `xplanet-user` | 8083 | 用户查询、bcrypt 登录和 JWT 签发 | 已实现；刷新/撤销为可选演进 |
 | `xplanet-article` | 8081 | 文章、评论、热榜、二级缓存、缓存失效 Outbox、点赞持久化投影 | 已实现；热榜和评论分页待完善 |
 | `xplanet-interaction` | 8082 | 点赞状态机、Transactional Outbox、MQ relay | 已实现 |
-| `xplanet-ai` | 8084 | 私有研究任务、运行记录、预算、请求幂等、可靠命令 Outbox | 控制面已实现；Agent 结果与进度待接入 |
+| `xplanet-ai` | 8084 | 私有研究任务、运行记录、预算、可靠命令、结果落库、SSE、人工审核和发布编排 | 已实现初步闭环 |
+| `xplanet-agent` | 8000，仅内部 | LangGraph 有界工作流、取消检查、进度回调、来源/证据/报告生成 | 已实现离线确定性提供器；真实模型/搜索待接入 |
 | `xplanet-web` | 静态页 | 社区功能演示 | 已实现，计划升级 |
 
 基础设施为 MySQL、Redis、RocketMQ，文章热点读使用 Caffeine + Redis 二级缓存，Redisson 用于缓存重建锁。
@@ -104,7 +105,8 @@
 3. 点赞使用数据库条件状态迁移、Transactional Outbox、RocketMQ 和持久化增量投影；
 4. Redis Lua 实现轻量固定窗口限流；
 5. 用户服务不可用时，文章展示能使用缓存或兜底作者名；
-6. 工程规模较小，适合继续演进，而不需要推倒重做。
+6. Java 控制面与 Python Agent 执行面边界清晰，研究任务已跑通“可靠命令→图执行→证据落库→审核→幂等发布”；
+7. 工程规模较小，适合继续演进，而不需要推倒重做。
 
 ### 2.3 当前已确认问题
 
@@ -136,7 +138,7 @@
 
 #### P2：清理和可维护性
 
-- 当前已有69个单元测试，并新增真实 MySQL/Redis/RocketMQ 正常链路 smoke test；缓存失效已完成 broker 停止/恢复故障注入，进程崩溃自动化仍待补充；
+- 当前已有81个 Java 单元测试、4个 Python Agent 测试，并新增真实 MySQL/Redis/RocketMQ/Agent 正常链路 smoke test；缓存失效已完成 broker 停止/恢复故障注入，Agent 进程崩溃恢复自动化仍待补充；
 - 已删除未使用的 Spring Cloud Alibaba BOM 和 `hutool-all`；保留的 Spring Cloud BOM 供 OpenFeign 使用；
 - 已删除未使用的缓存 Key、错误码和未赋值的响应 `traceId`；真正引入 TraceId 时应完成 HTTP/MQ 全链路透传；
 - 静态页面直接配置三个服务地址，缺少统一入口；
@@ -161,6 +163,7 @@
 | ADR-010 | MVP 不引入 Nacos、Seata、Dubbo、Kubernetes | 已接受 | 当前没有对应规模和一致性需求 |
 | ADR-011 | Gateway、Qdrant、MinIO、监控平台按阶段引入 | 已接受 | 先完成核心闭环，再增加运维复杂度 |
 | ADR-012 | 不在 Agent MVP 同时升级 Spring Boot 大版本 | 已接受 | 控制变量，避免迁移风险掩盖业务问题 |
+| ADR-013 | RocketMQ 命令由 Java Consumer 接收，再通过内部 HTTP 调 Python Agent；结果落库成功后确认消息 | 已接受 | 当前 RocketMQ 4.9.7 的 Python 原生客户端存在平台和运行时负担，桥接方案保留异步削峰、至少一次重投和 Java/Python 独立部署边界 |
 
 ### 3.1 OpenFeign 与 HTTP Service Client
 
@@ -195,7 +198,8 @@ flowchart LR
 
     AIS -->|"本地事务"| DB[("MySQL")]
     AIS -->|"Outbox Relay"| MQ["RocketMQ"]
-    MQ -->|"research command"| AG["xplanet-agent<br/>FastAPI + LangGraph Worker"]
+    MQ -->|"research command"| AIC["xplanet-ai MQ Consumer<br/>Inbox + state transition"]
+    AIC -->|"internal HTTP"| AG["xplanet-agent<br/>FastAPI + LangGraph Worker"]
 
     AG --> PG["Planner"]
     PG --> SR["并行 Search / Read"]
@@ -209,13 +213,13 @@ flowchart LR
     AG --> TOOLS["搜索、网页、PDF、内部知识工具"]
     AG --> VS[("Qdrant（P1）")]
     AG --> CP["Checkpoint Store"]
-    AG -->|"步骤/文本进度"| RS["Redis Stream"]
+    AG -->|"步骤/文本进度回调"| AIS
+    AIS --> RS["Redis Stream"]
     RS --> AIS
     AIS -->|"SSE"| U
-    FIN -->|"result event"| MQ
-    MQ --> AIS
-    AIS -->|"publish event"| MQ
-    MQ --> AS
+    FIN -->|"result HTTP response"| AIC
+    AIC -->|"validate + transactional persist"| DB
+    AIS -->|"approved report / OpenFeign"| AS
 
     US --> DB
     AS --> DB
@@ -235,7 +239,7 @@ flowchart LR
 | `xplanet-article` | 8081 | Java | 文章、评论、缓存、热榜、AI 报告发布投影 |
 | `xplanet-interaction` | 8082 | Java | 点赞状态机、关系事实、事件 Outbox |
 | `xplanet-ai` | 8084 | Java，新建 | AI 任务状态机、报告、来源、引用、成本、SSE |
-| `xplanet-agent` | 8000 | Python，新建 | Agent 图执行、模型、工具、checkpoint、评测适配 |
+| `xplanet-agent` | 8000 | Python，新建 | Agent 图执行、离线提供器、工具/模型/checkpoint/评测适配 |
 | `xplanet-web` | 5173/静态产物 | Vue 3 + TypeScript，P1 | 研究工作台、步骤时间线、证据面板、报告编辑、社区页面 |
 
 ### 4.2 数据所有权
@@ -423,11 +427,11 @@ WHERE id = ? AND status = ? AND version = ?;
 1. Java 校验用户、额度和请求幂等键
 2. 本地事务插入 ai_task + ai_outbox
 3. Outbox Relay 投递 AI_TASK_REQUESTED
-4. Agent 使用 taskId/runId 幂等领取任务
-5. Agent 执行状态图并保存 checkpoint
-6. 进度写 Redis Stream，由 xplanet-ai 转 SSE
-7. 最终结果通过 MQ 返回
-8. xplanet-ai 幂等保存报告、证据和引用
+4. xplanet-ai Consumer 使用 eventId Inbox 幂等领取，并条件迁移 taskId/runId
+5. Consumer 通过内部 Token + HTTP 调用 Python Agent
+6. Agent 执行状态图；持久化 checkpoint 在 Phase 2 接入
+7. Agent 回调 xplanet-ai，把进度写 Redis Stream 并转 SSE
+8. 最终结果通过 HTTP 返回 Consumer，校验引用闭包后事务保存报告、证据和引用
 9. Outbox 记录标记为已投递并按保留策略归档
 ```
 
@@ -439,14 +443,13 @@ WHERE id = ? AND status = ? AND version = ?;
 
 ```text
 用户确认报告
-  → ai 服务本地事务写 APPROVED + publish outbox
-  → RocketMQ 发布 REPORT_APPROVED
-  → article 服务以 reportId 作为幂等键创建文章
-  → article 发布 ARTICLE_CREATED
-  → ai 服务把报告状态更新为 PUBLISHED
+  → ai 服务本地事务将 WAITING_REVIEW 写为 APPROVED
+  → ai 通过带内部 Token 的 OpenFeign 调用 article
+  → article 以 reportId 唯一约束幂等创建文章
+  → ai 把报告和任务更新为 PUBLISHED / SUCCEEDED
 ```
 
-如果 article 暂时不可用，消息可以重试；唯一约束保证不会重复发布同一报告。
+如果 article 暂时不可用，报告保持 APPROVED，用户可重试；唯一约束保证不会重复发布同一报告。后续若发布吞吐或自动重试需求增长，再把这一步升级为 publish Outbox，而不是在 MVP 同时引入第二条消息链路。
 
 ---
 
@@ -691,7 +694,7 @@ Docker Compose
 MySQL 8
 Redis 7
 RocketMQ
-Agent Model API Key
+Agent Model API Key（接入真实模型时）
 ```
 
 Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 展示变量名，通过本地 `.env` 注入，真实值不得提交。
@@ -703,8 +706,8 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 3. [x] user 容器补全 Redis 和外部 Token 配置；
 4. [x] 使用统一、明确的 Compose 网络名称；
 5. [x] 移除过时的顶层 `version`；
-6. [x] 启动脚本执行依赖就绪和三个应用健康检查；
-7. [ ] AI Agent 仅暴露内部端口，外部通过 Gateway/AI 服务访问；
+6. [x] 启动脚本执行依赖就绪、四个 Java 应用和 Agent 健康检查；
+7. [x] AI Agent 仅暴露 Compose 内部端口，外部通过 AI 服务访问；
 8. [x] 提供 Compose 配置校验、Flyway 自动迁移和端到端 smoke test。
 
 ### 14.3 暂不处理的基础设施
@@ -738,21 +741,21 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 目标：真正跑通一次研究任务，而不是只做聊天接口。
 
 - [x] 新增 `xplanet-ai` Java 模块；
-- [ ] 新增 `xplanet-agent` Python 服务；
+- [x] 新增 `xplanet-agent` Python 服务；
 - [x] 实现 `ai_task`、`ai_run`、来源/证据/报告模型和基础 Outbox；
-- [ ] 实现 Planner→Search→Reader→Writer→Critic；
-- [ ] RocketMQ 投递任务和返回结果；
-- [ ] Redis Stream + SSE 推送阶段进度；
-- [ ] 保存来源、证据和引用；
-- [ ] 用户确认后发布为文章。
+- [x] 实现 Validate→Planner→Research/Reader→Evidence→Writer→Critic 的最小 LangGraph；
+- [x] RocketMQ 投递任务，Java Consumer 调 Agent 并在结果落库后确认消息；
+- [x] Redis Stream + SSE 推送阶段进度；
+- [x] 校验并保存来源、证据和引用；
+- [x] 用户确认后通过 `reportId` 唯一投影幂等发布为文章。
 
-验收：重启浏览器不丢任务；报告包含可点击来源；同一发布事件重投不会生成重复文章；失败任务有明确状态和错误原因。
+验收结果：浏览器重连后任务事实仍在 MySQL；报告包含可点击来源；同一报告重复确认返回同一文章；取消任务进入明确终态。当前提供器为离线确定性资料，真实模型/搜索、持久化 checkpoint 和失败恢复进入 Phase 2。
 
 ### Phase 2：Agent可靠性与质量
 
 - [ ] 持久化 checkpoint 和断点恢复；
 - [ ] 节点级幂等、超时和有界重试；
-- [ ] Human-in-the-loop；
+- [x] Human-in-the-loop 审核发布（基础版）；
 - [ ] 模型路由和预算控制；
 - [ ] 引用支持性校验；
 - [ ] 黄金数据集和自动评测；
@@ -804,13 +807,13 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 ### P0：最先实施
 
-1. `BASE-001`：已建立41个单元测试基线和可重复执行的真实中间件 smoke test；故障注入继续迭代；
+1. `BASE-001`：已建立81个 Java 测试、4个 Python 测试和可重复执行的真实中间件/Agent smoke test；故障注入继续迭代；
 2. `AI-001`：已创建 AI 任务状态机、预算边界、用户级幂等和数据库表；
-3. `AI-002`：已实现 Transactional Outbox 请求/取消命令；Agent 幂等消费待下一阶段；
-4. `AI-003`：实现五节点 Agent 最小图；
-5. `AI-004`：实现来源、证据、引用关系；
-6. `AI-005`：实现 Redis Stream + SSE；
-7. `AI-006`：实现报告审核和幂等发布；
+3. `AI-002`：已实现 Transactional Outbox 请求/取消命令和带 Inbox 的 Agent 消费桥接；
+4. `AI-003`：已实现六节点 Agent 最小图和有界执行；
+5. `AI-004`：已实现来源、证据、引用关系及引用闭包校验；
+6. `AI-005`：已实现 Redis Stream + SSE；
+7. `AI-006`：已实现报告审核和 `reportId` 唯一投影幂等发布；
 8. `SEC-001`：修复空密码、硬编码密钥和前端 XSS；
 9. `LIKE-001`：先补故障测试并禁止错误宣传，再实施可靠重构；
 10. `DOC-001`：同步 README 中“当前/目标”状态。
@@ -839,11 +842,11 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 ### 17.1 AI主线
 
-1. 不是单轮聊天，而是有状态、可恢复的研究工作流；
+1. 不是单轮聊天，而是显式状态图驱动、带预算和人工审核的研究工作流；持久化恢复是下一阶段；
 2. 采用“先证据后生成”和结论—证据绑定降低幻觉；
 3. Planner、并行研究、Critic、修订循环均有预算和停止条件；
-4. checkpoint、幂等节点和失败分类支持长任务恢复；
-5. 有固定数据集评测引用正确率、成本、延迟和恢复成功率；
+4. 当前以任务状态机、Outbox/Inbox 和停止条件保证可控执行；下一阶段补 checkpoint、幂等节点和失败分类恢复；
+5. 固定数据集、引用正确率、成本和恢复成功率属于下一阶段评测目标；
 6. Human-in-the-loop控制发布和其他有副作用工具。
 
 ### 17.2 后端主线
@@ -912,6 +915,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 | 版本 | 日期 | 变更 | 影响 |
 |---|---|---|---|
+| v2.6 | 2026-07-16 | 新增 `xplanet-agent` FastAPI/LangGraph 六节点有界工作流、Java MQ 消费桥、Redis Stream/SSE、结果闭包校验与事务落库、Human-in-the-loop 审核及 `reportId` 幂等文章发布；新增 V006 和完整 AI smoke | Phase 1 初步闭环完成；81项 Java 与4项 Python 测试、实库迁移、7步进度、证据闭包、跨用户隔离、重复发布和取消均通过；真实模型/搜索、checkpoint 和评测明确进入 Phase 2 |
 | v2.5 | 2026-07-16 | 新增 `xplanet-ai` 8084 控制面、V005 十张 AI 任务/运行/证据/报告/成本/Outbox-Inbox 表、私有读写鉴权、用户级载荷幂等、预算上限、版本条件取消和可靠请求/取消命令；Docker 与 smoke 扩展为四服务 | Java 控制面已具备可验证的长任务治理基础；69项单测、实库迁移、跨用户拒绝、两条AI命令发送和三类Outbox零积压已通过；Python Agent仍明确为下一阶段 |
 | v2.4 | 2026-07-16 | 分离 RocketMQ 宿主机/容器 broker 配置；增加 Flyway V4 baseline 与自动迁移脚本、全 Docker 启动健康检查、可配置基础镜像仓库及 CI；实际完成全镜像构建和 smoke test | 新环境不再手工执行历史 SQL；混合与容器网络均获得可达 broker 地址；提交时自动拦截单测、Compose 或 PowerShell 语法回归 |
 | v2.3 | 2026-07-16 | 文章更新/删除与立即、延迟两条缓存失效 Outbox 同事务提交；新增带租约 relay、失败退避、L1/L2 幂等消费，并将 article 调度池扩为4线程 | MQ 故障和提交后进程崩溃不再永久丢失缓存失效；热榜刷新、点赞投影和缓存 relay 不再共用单调度线程 |

@@ -4,7 +4,7 @@
 # 本 compose 加入基础设施的网络,直接用服务名(mysql/redis/rocketmq-namesrv)互访,
 # 不再使用 host.docker.internal。
 #
-# 注:本地开发更推荐「混合模式」——中间件用 Docker,3 个服务用 IDE 跑,便于断点调试。
+# 注:本地开发更推荐「混合模式」——中间件用 Docker,4 个 Java 服务用 IDE 跑,便于断点调试。
 #     全 Docker 模式适合演示 / 部署。
 
 services:
@@ -25,6 +25,7 @@ services:
       TOKEN_SECRET: ${TOKEN_SECRET}
       TOKEN_EXPIRE_SECONDS: ${TOKEN_EXPIRE_SECONDS:-86400}
       TRUST_FORWARDED_HEADERS: ${TRUST_FORWARDED_HEADERS:-false}
+      AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN}
     ports:
       - "8081:8081"
     networks:
@@ -72,6 +73,25 @@ services:
     networks:
       - xp-net
 
+  agent:
+    build:
+      context: ..
+      dockerfile: xplanet-agent/Dockerfile
+      args:
+        BASE_REGISTRY: ${DOCKER_BASE_REGISTRY:-docker.io/library}
+    container_name: xp-agent
+    restart: unless-stopped
+    environment:
+      AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN}
+      AI_CONTROL_URL: http://ai:8084
+    networks:
+      - xp-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; assert urllib.request.urlopen('http://localhost:8000/health', timeout=2).status == 200"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   ai:
     build:
       context: ..
@@ -87,6 +107,12 @@ services:
       ROCKETMQ_NS: rocketmq-namesrv:9876
       TOKEN_SECRET: ${TOKEN_SECRET}
       TOKEN_EXPIRE_SECONDS: ${TOKEN_EXPIRE_SECONDS:-86400}
+      AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN}
+      AGENT_SERVICE_URL: http://agent:8000
+      ARTICLE_SERVICE_URL: http://article:8081
+    depends_on:
+      agent:
+        condition: service_healthy
     ports:
       - "8084:8084"
     networks:

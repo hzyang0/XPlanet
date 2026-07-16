@@ -31,6 +31,12 @@ public interface AiTaskMapper {
     @Select("SELECT * FROM ai_task WHERE id=#{taskId} AND user_id=#{userId}")
     AiTaskRecord findOwned(@Param("taskId") Long taskId, @Param("userId") Long userId);
 
+    @Select("SELECT * FROM ai_task WHERE id=#{taskId}")
+    AiTaskRecord findInternal(@Param("taskId") Long taskId);
+
+    @Select("SELECT * FROM ai_task WHERE id=#{taskId} FOR UPDATE")
+    AiTaskRecord findInternalForUpdate(@Param("taskId") Long taskId);
+
     @Select("SELECT * FROM ai_task WHERE user_id=#{userId} ORDER BY id DESC LIMIT #{limit}")
     List<AiTaskRecord> listOwned(@Param("userId") Long userId, @Param("limit") int limit);
 
@@ -40,4 +46,25 @@ public interface AiTaskMapper {
     int cancel(@Param("taskId") Long taskId,
                @Param("userId") Long userId,
                @Param("version") Integer version);
+
+    @Update("UPDATE ai_task SET status='RUNNING', version=version+1, last_error=NULL, update_time=NOW() " +
+            "WHERE id=#{taskId} AND current_run_id=#{runId} AND status IN ('QUEUED','RETRYING')")
+    int markRunning(@Param("taskId") Long taskId, @Param("runId") String runId);
+
+    @Update("UPDATE ai_run SET status='RUNNING', current_node='VALIDATE_INPUT', " +
+            "started_time=COALESCE(started_time,NOW()), update_time=NOW() " +
+            "WHERE run_id=#{runId} AND task_id=#{taskId} AND status IN ('QUEUED','RETRYING','RUNNING')")
+    int markRunRunning(@Param("taskId") Long taskId, @Param("runId") String runId);
+
+    @Update("UPDATE ai_task SET status='RETRYING', version=version+1, last_error=#{error}, update_time=NOW() " +
+            "WHERE id=#{taskId} AND current_run_id=#{runId} AND status='RUNNING'")
+    int markRetrying(@Param("taskId") Long taskId,
+                     @Param("runId") String runId,
+                     @Param("error") String error);
+
+    @Update("UPDATE ai_run SET status='RETRYING', last_error=#{error}, update_time=NOW() " +
+            "WHERE run_id=#{runId} AND task_id=#{taskId} AND status='RUNNING'")
+    int markRunRetrying(@Param("taskId") Long taskId,
+                        @Param("runId") String runId,
+                        @Param("error") String error);
 }

@@ -20,6 +20,7 @@ jobs:
       - name: Validate Compose files
         env:
           TOKEN_SECRET: ci-only-token-secret-at-least-32-characters
+          AGENT_INTERNAL_TOKEN: ci-only-agent-secret-at-least-32-characters
         run: |
           docker compose -f docker/docker-compose-infra.yml config --quiet
           docker compose -f docker/docker-compose-app.yml config --quiet
@@ -29,3 +30,12 @@ jobs:
           Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
             [void][scriptblock]::Create((Get-Content $_.FullName -Raw -Encoding UTF8))
           }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: xplanet-agent/pyproject.toml
+      - name: Agent offline tests
+        run: |
+          python -m pip install -e './xplanet-agent[test]'
+          python -m pytest xplanet-agent

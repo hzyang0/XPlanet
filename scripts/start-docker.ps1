@@ -26,6 +26,12 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 if ([string]::IsNullOrWhiteSpace($env:TOKEN_SECRET) -or $env:TOKEN_SECRET.Length -lt 32) {
     Write-Error '请先设置至少32字符的 TOKEN_SECRET。'
 }
+if ([string]::IsNullOrWhiteSpace($env:AGENT_INTERNAL_TOKEN)) {
+    $env:AGENT_INTERNAL_TOKEN = $env:TOKEN_SECRET
+}
+if ($env:AGENT_INTERNAL_TOKEN.Length -lt 32) {
+    Write-Error 'AGENT_INTERNAL_TOKEN 至少需要32字符。'
+}
 
 $occupied = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
     Where-Object { $_.LocalPort -in 8081, 8082, 8083, 8084 }
@@ -75,6 +81,12 @@ if ($down.Count -gt 0) {
     docker compose -f docker/docker-compose-app.yml ps
     docker compose -f docker/docker-compose-app.yml logs --tail 100
     throw "应用容器未在3分钟内全部健康：$($down -join ',')"
+}
+
+$agentHealth = docker inspect -f "{{.State.Health.Status}}" xp-agent 2>$null
+if ($agentHealth -ne "healthy") {
+    docker logs xp-agent --tail 100
+    throw "Agent 容器健康状态异常：$agentHealth"
 }
 
 docker compose -f docker/docker-compose-infra.yml ps

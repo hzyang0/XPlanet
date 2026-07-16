@@ -15,9 +15,11 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import javax.validation.Valid;
 import java.util.List;
+import com.xplanet.ai.service.AiProgressService;
 
 @RestController
 @RequestMapping("/api/ai/tasks")
@@ -25,6 +27,7 @@ import java.util.List;
 public class AiTaskController {
 
     private final AiTaskService taskService;
+    private final AiProgressService progressService;
 
     @PostMapping
     public R<AiTaskVO> create(@RequestHeader("Idempotency-Key") String idempotencyKey,
@@ -45,5 +48,12 @@ public class AiTaskController {
     @DeleteMapping("/{taskId}")
     public R<AiTaskVO> cancel(@PathVariable Long taskId) {
         return R.ok(taskService.cancel(UserContext.getUserId(), taskId));
+    }
+
+    @GetMapping(value = "/{taskId}/events", produces = "text/event-stream")
+    public SseEmitter events(@PathVariable Long taskId,
+                             @RequestHeader(value = "Last-Event-ID", required = false)
+                             String lastEventId) {
+        return progressService.subscribe(UserContext.getUserId(), taskId, lastEventId);
     }
 }

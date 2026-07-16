@@ -1,5 +1,10 @@
 server:
   port: 8084
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
 
 security:
   token:
@@ -30,6 +35,26 @@ ai:
   outbox:
     publish-interval-ms: ${AI_OUTBOX_INTERVAL_MS:500}
     batch-size: ${AI_OUTBOX_BATCH_SIZE:50}
+  internal-token: ${AGENT_INTERNAL_TOKEN:${TOKEN_SECRET:}}
+  progress:
+    max-length: ${AI_PROGRESS_MAX_LENGTH:1000}
+    ttl-hours: ${AI_PROGRESS_TTL_HOURS:24}
+
+agent-service:
+  base-url: ${AGENT_SERVICE_URL:http://localhost:8000}
+
+article-service:
+  base-url: ${ARTICLE_SERVICE_URL:http://localhost:8081}
+
+feign:
+  client:
+    config:
+      agent-service:
+        connect-timeout: 2000
+        read-timeout: 360000
+      article-publish-service:
+        connect-timeout: 1000
+        read-timeout: 3000
 
 management:
   endpoints:

@@ -23,6 +23,7 @@ public enum ErrorCode {
     AI_TASK_NOT_FOUND(4001, "研究任务不存在"),
     AI_TASK_STATE_CONFLICT(4002, "研究任务当前状态不允许该操作"),
     AI_IDEMPOTENCY_CONFLICT(4003, "幂等键已用于不同的研究请求"),
+    AI_REPORT_NOT_READY(4004, "研究报告尚未生成或无权访问"),
 
     FLOW_BLOCKED(5001, "请求过于频繁,请稍后再试"),
 

@@ -216,6 +216,13 @@ CREATE TABLE `consumer_inbox` (
     PRIMARY KEY (`consumer`, `event_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='跨服务消息消费幂等记录';
 
+DROP TABLE IF EXISTS `ai_published_article`;
+CREATE TABLE `ai_published_article` (
+    `report_id` BIGINT UNSIGNED NOT NULL, `article_id` BIGINT UNSIGNED NOT NULL,
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`report_id`), UNIQUE KEY `uk_ai_published_article` (`article_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI报告到社区文章的幂等发布投影';
+
 -- 测试数据
 -- 本地演示账号的初始密码均为 password；数据库只保存 bcrypt 哈希。
 INSERT INTO `user` (`id`, `username`, `password_hash`, `nickname`) VALUES

@@ -1,5 +1,10 @@
 server:
   port: 8081
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
   tomcat:
     threads:
       max: 400
@@ -13,6 +18,9 @@ security:
     secret: ${TOKEN_SECRET:}
     issuer: xplanet
     expiration-seconds: ${TOKEN_EXPIRE_SECONDS:86400}
+
+ai:
+  internal-token: ${AGENT_INTERNAL_TOKEN:${TOKEN_SECRET:}}
 
 spring:
   application:

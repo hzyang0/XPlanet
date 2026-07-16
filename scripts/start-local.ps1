@@ -22,6 +22,9 @@ if (-not (Get-Command mvn -ErrorAction SilentlyContinue)) {
 if ([string]::IsNullOrWhiteSpace($env:TOKEN_SECRET) -or $env:TOKEN_SECRET.Length -lt 32) {
     Write-Error '请先设置至少32字符的 TOKEN_SECRET，例如：$env:TOKEN_SECRET="replace-with-a-random-secret-at-least-32-bytes"'
 }
+if ([string]::IsNullOrWhiteSpace($env:AGENT_INTERNAL_TOKEN)) {
+    $env:AGENT_INTERNAL_TOKEN = $env:TOKEN_SECRET
+}
 
 $env:MYSQL_HOST = "localhost"
 $env:MYSQL_USER = "root"

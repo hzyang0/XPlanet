@@ -13,7 +13,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableFeignClients(basePackageClasses = UserServiceClient.class)
 @ComponentScan(basePackages = {"com.xplanet.article", "com.xplanet.common"})
 @MapperScan({"com.xplanet.article.mapper", "com.xplanet.article.comment",
-        "com.xplanet.article.projection", "com.xplanet.article.outbox"})
+        "com.xplanet.article.projection", "com.xplanet.article.outbox", "com.xplanet.article.ai"})
 public class ArticleApplication {
     public static void main(String[] args) {
         SpringApplication.run(ArticleApplication.class, args);

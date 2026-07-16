@@ -58,6 +58,10 @@ function Assert-BusinessSuccess($Response, [string]$Description) {
     }
 }
 
+function ConvertFrom-Utf8Base64([string]$Value) {
+    return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))
+}
+
 Write-Host ">>> 检查服务健康状态" -ForegroundColor Cyan
 $health = 8081, 8082, 8083, 8084 | ForEach-Object {
     $response = Invoke-RestMethod -Uri "http://localhost:$_/actuator/health" -TimeoutSec 5
@@ -66,6 +70,11 @@ $health = 8081, 8082, 8083, 8084 | ForEach-Object {
     }
     "${_}:UP"
 }
+$agentHealth = docker inspect -f "{{.State.Health.Status}}" xp-agent 2>$null
+if ($agentHealth -ne "healthy") {
+    throw "Agent 容器健康状态不是 healthy：$agentHealth"
+}
+$health += "agent:healthy"
 
 Write-Host ">>> 登录并验证文章读接口" -ForegroundColor Cyan
 $loginBody = @{ username = $Username; password = $Password } | ConvertTo-Json
@@ -77,7 +86,7 @@ if ([string]::IsNullOrWhiteSpace($login.data.token)) {
 }
 $headers = @{ Authorization = "Bearer $($login.data.token)" }
 
-Write-Host ">>> 验证 AI 任务幂等创建、私有读取、取消和可靠 Outbox" -ForegroundColor Cyan
+Write-Host ">>> 验证 AI Agent、证据报告、人工审核和幂等发布闭环" -ForegroundColor Cyan
 $unauthenticatedAi = Invoke-RestMethod -Uri "http://localhost:8084/api/ai/tasks" -TimeoutSec 5
 if ($unauthenticatedAi.code -ne 2001) {
     throw "未登录读取 AI 任务应返回业务码 2001，实际为 $($unauthenticatedAi.code)"
@@ -122,21 +131,71 @@ if ($otherRead.code -ne 4001) {
 Wait-Until {
     [long](Invoke-SqlScalar "SELECT COUNT(*) FROM ai_outbox WHERE aggregate_id=$($aiCreated.data.id) AND event_type='AI_TASK_REQUESTED' AND status=2;") -eq 1
 } "AI任务请求 Outbox 发送"
-$aiCancelled = Invoke-RestMethod -Method Delete -Uri "http://localhost:8084/api/ai/tasks/$($aiCreated.data.id)" `
-    -Headers $headers -TimeoutSec 10
-Assert-BusinessSuccess $aiCancelled "取消 AI 任务"
-if ($aiCancelled.data.status -ne "CANCELLED") {
-    throw "取消后 AI 任务状态不是 CANCELLED"
-}
 Wait-Until {
-    [long](Invoke-SqlScalar "SELECT COUNT(*) FROM ai_outbox WHERE aggregate_id=$($aiCreated.data.id) AND event_type='AI_TASK_CANCELLED' AND status=2;") -eq 1
-} "AI任务取消 Outbox 发送"
-$aiCancelAgain = Invoke-RestMethod -Method Delete -Uri "http://localhost:8084/api/ai/tasks/$($aiCreated.data.id)" `
+    (Invoke-RestMethod -Uri "http://localhost:8084/api/ai/tasks/$($aiCreated.data.id)" `
+        -Headers $headers -TimeoutSec 10).data.status -eq "WAITING_REVIEW"
+} "Agent 完成研究并进入人工审核"
+$aiReport = Invoke-RestMethod -Uri "http://localhost:8084/api/ai/tasks/$($aiCreated.data.id)/report" `
     -Headers $headers -TimeoutSec 10
-Assert-BusinessSuccess $aiCancelAgain "重复取消 AI 任务"
+Assert-BusinessSuccess $aiReport "读取 AI 报告"
+if ($aiReport.data.sources.Count -lt 1 -or $aiReport.data.evidence.Count -lt 1 `
+        -or $aiReport.data.citations.Count -lt 1) {
+    throw "AI 报告缺少来源、证据或引用"
+}
+$evidenceIds = @($aiReport.data.evidence | ForEach-Object { [long]$_.id })
+foreach ($citation in $aiReport.data.citations) {
+    if ([long]$citation.evidenceId -notin $evidenceIds) {
+        throw "报告引用指向未知 evidenceId=$($citation.evidenceId)"
+    }
+}
+$progressEventCount = [long](docker exec xp-redis redis-cli XLEN "xp:ai:task:$($aiCreated.data.id):events")
+if ($progressEventCount -lt 7) {
+    throw "Agent 进度事件不完整，实际为 $progressEventCount"
+}
+$otherReport = Invoke-RestMethod -Uri "http://localhost:8084/api/ai/tasks/$($aiCreated.data.id)/report" `
+    -Headers $otherHeaders -TimeoutSec 10
+if ($otherReport.code -ne 4004) {
+    throw "其他用户读取 AI 报告应返回业务码 4004，实际为 $($otherReport.code)"
+}
+$approved = Invoke-RestMethod -Method Post `
+    -Uri "http://localhost:8084/api/ai/tasks/$($aiCreated.data.id)/report/approve" `
+    -Headers $headers -ContentType "application/json; charset=utf-8" -Body "{}" -TimeoutSec 10
+Assert-BusinessSuccess $approved "批准并发布 AI 报告"
+$approvedAgain = Invoke-RestMethod -Method Post `
+    -Uri "http://localhost:8084/api/ai/tasks/$($aiCreated.data.id)/report/approve" `
+    -Headers $headers -ContentType "application/json; charset=utf-8" -Body "{}" -TimeoutSec 10
+Assert-BusinessSuccess $approvedAgain "重复批准 AI 报告"
+if ($approved.data.status -ne "PUBLISHED" -or $approved.data.publishArticleId -ne $approvedAgain.data.publishArticleId) {
+    throw "AI 报告未发布或重复批准产生了不同文章"
+}
+$publishedArticle = Invoke-RestMethod `
+    -Uri "http://localhost:8081/api/article/$($approved.data.publishArticleId)" -TimeoutSec 10
+Assert-BusinessSuccess $publishedArticle "读取 AI 发布文章"
+if ([long](Invoke-SqlScalar "SELECT COUNT(*) FROM ai_published_article WHERE report_id=$($approved.data.id);") -ne 1) {
+    throw "AI 报告没有保持唯一文章发布投影"
+}
 if ([long](Invoke-SqlScalar "SELECT COUNT(*) FROM ai_task WHERE user_id=$($login.data.userId) AND idempotency_key='$aiKey';") -ne 1) {
     throw "AI 任务幂等键没有约束为单行"
 }
+
+Write-Host ">>> 验证 AI 取消命令和重复取消幂等" -ForegroundColor Cyan
+$cancelKey = "smoke-cancel-$([Guid]::NewGuid().ToString('N'))"
+$cancelHeaders = @{ Authorization = $headers.Authorization; "Idempotency-Key" = $cancelKey }
+$cancelCreated = Invoke-RestMethod -Method Post -Uri "http://localhost:8084/api/ai/tasks" `
+    -Headers $cancelHeaders -ContentType "application/json; charset=utf-8" -Body $aiBody -TimeoutSec 10
+Assert-BusinessSuccess $cancelCreated "创建待取消 AI 任务"
+$aiCancelled = Invoke-RestMethod -Method Delete `
+    -Uri "http://localhost:8084/api/ai/tasks/$($cancelCreated.data.id)" -Headers $headers -TimeoutSec 10
+Assert-BusinessSuccess $aiCancelled "取消 AI 任务"
+$aiCancelAgain = Invoke-RestMethod -Method Delete `
+    -Uri "http://localhost:8084/api/ai/tasks/$($cancelCreated.data.id)" -Headers $headers -TimeoutSec 10
+Assert-BusinessSuccess $aiCancelAgain "重复取消 AI 任务"
+if ($aiCancelled.data.status -ne "CANCELLED" -or $aiCancelAgain.data.status -ne "CANCELLED") {
+    throw "AI 取消没有保持幂等终态"
+}
+Wait-Until {
+    [long](Invoke-SqlScalar "SELECT COUNT(*) FROM ai_outbox WHERE aggregate_id=$($cancelCreated.data.id) AND event_type='AI_TASK_CANCELLED' AND status=2;") -eq 1
+} "AI任务取消 Outbox 发送"
 
 $article = Invoke-RestMethod -Uri "http://localhost:8081/api/article/$ArticleId" -TimeoutSec 10
 Assert-BusinessSuccess $article "文章详情"
@@ -164,10 +223,16 @@ if ($invalidRelationAfter -ne $invalidRelationBefore -or $invalidOutboxAfter -ne
 Write-Host ">>> 验证文章更新的可靠缓存失效 Outbox" -ForegroundColor Cyan
 $cacheOutboxBaselineId = [long](Invoke-SqlScalar `
     "SELECT COALESCE(MAX(id),0) FROM article_change_outbox;")
+$storedTitle = ConvertFrom-Utf8Base64 (Invoke-SqlScalar `
+    "SELECT REPLACE(TO_BASE64(title),CHAR(10),'') FROM article WHERE id=$ArticleId;")
+$storedContent = ConvertFrom-Utf8Base64 (Invoke-SqlScalar `
+    "SELECT REPLACE(TO_BASE64(content),CHAR(10),'') FROM article WHERE id=$ArticleId;")
+$storedTags = ConvertFrom-Utf8Base64 (Invoke-SqlScalar `
+    "SELECT REPLACE(TO_BASE64(tags),CHAR(10),'') FROM article WHERE id=$ArticleId;")
 $articleUpdateBody = @{
-    title = $article.data.title
-    content = $article.data.content
-    tags = $article.data.tags
+    title = $storedTitle
+    content = $storedContent
+    tags = $storedTags
 } | ConvertTo-Json
 $articleUpdate = Invoke-RestMethod -Method Put -Uri "http://localhost:8081/api/article/$ArticleId" `
     -Headers $headers -ContentType "application/json; charset=utf-8" `
@@ -280,6 +345,11 @@ if ($unauthenticated.code -ne 2001) {
     AiIdempotencyVerified = ($aiDuplicate.data.id -eq $aiCreated.data.id)
     AiPrivateReadCode = $unauthenticatedAi.code
     AiCrossUserReadCode = $otherRead.code
+    AiCrossUserReportCode = $otherReport.code
+    AiProgressEvents = $progressEventCount
+    AiEvidenceCount = $aiReport.data.evidence.Count
+    AiPublishedArticleId = $approved.data.publishArticleId
+    AiPublishIdempotent = ($approved.data.publishArticleId -eq $approvedAgain.data.publishArticleId)
     AiTaskCancelled = ($aiCancelled.data.status -eq "CANCELLED")
 } | Format-List
 

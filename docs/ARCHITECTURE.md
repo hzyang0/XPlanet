@@ -6,22 +6,21 @@
    ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐
    │  Article   │ │Interaction │ │    User    │ │ AI Control │
    │   (8081)   │ │   (8082)   │ │   (8083)   │ │   (8084)   │
-   │ 文章+二级缓存│ │  点赞削峰   │ │  认证用户   │ │任务+可靠命令│
+   │文章+审核发布│ │点赞状态/Outbox│ │  认证用户   │ │任务/报告/SSE│
    └─────┬──────┘ └─────┬──────┘ └──────┬─────┘ └──────┬─────┘
-         │              │               │              │
-   ┌─────┴──────────────┴───────────────┴──────────────┘
-   │
-   ▼
-┌───────┐   ┌────────────┐   ┌────────────────────┐
-│ MySQL │   │   Redis    │   │     RocketMQ       │
-│(主数据)│   │ L2 缓存 +  │   │  like(削峰)+      │
-│       │   │ 锁 + 限流  │   │  change(L1广播)   │
-└───────┘   └─────┬──────┘   └────────────────────┘
-                  ▲
-                  │  各实例进程内 Caffeine L1
-            ┌─────┴──────────────────┐
-            │   Application 实例      │
-            └────────────────────────┘
+         └───────────────┴───────────────┴──────────────┼──────┐
+                                                       │      │
+   ┌───────────┐  HTTP   ┌─────────────────┐      ┌─────▼──────▼──────┐
+   │ Agent 8000│◄────────│ AI MQ Consumer  │◄─────│ RocketMQ          │
+   │ LangGraph │ progress│ + result persist│      │ like/change/AI    │
+   └─────┬─────┘────────►└────────┬────────┘      └───────────────────┘
+         │                         │
+         └─────────────────────────┼──────────────┐
+                                   ▼              ▼
+                              ┌─────────┐    ┌─────────┐
+                              │ MySQL   │    │ Redis   │
+                              │事实/证据 │    │缓存/进度│
+                              └─────────┘    └─────────┘
 ```
 
 ## 2. 二级缓存(读路径)
@@ -150,23 +149,53 @@ Redis SETNX 不再作为最终保证。
 - 投影实例崩溃：计数更新和事件标记处于同一事务，整体提交或整体回滚；
 - 多实例投影：`SKIP LOCKED` 避免处理同一批数据库行。
 
-## 5. 已知取舍(面试可主动说出来加分)
+## 5. AI 研究执行、进度与发布
+
+### 5.1 当前可运行链路
+
+```text
+POST /api/ai/tasks
+  → ai_task + ai_run + ai_outbox 在同一 MySQL 事务提交
+  → Outbox relay 至少一次投递 AI_TASK_REQUESTED
+  → xplanet-ai 的 RocketMQ Consumer 以 eventId 写消费 Inbox
+  → Consumer 通过带内部 Token 的 HTTP 调用 xplanet-agent
+  → Agent 执行 ValidateInput → Planner → Research → Evidence Builder → Writer → Critic
+  → 每个节点回调 xplanet-ai，进度写入有长度与 TTL 上限的 Redis Stream
+  → Agent 返回来源/证据/引用/报告
+  → xplanet-ai 校验 URL、数量边界和引用闭包后，在同一事务落库并进入 WAITING_REVIEW
+  → 浏览器通过 SSE 查看进度，任务所有者审核报告
+  → 审核通过后 OpenFeign 调 article，以 reportId 唯一投影幂等创建文章
+```
+
+当前 RocketMQ 为 4.9.7。为了避免在 Python 容器中引入平台相关的原生 RocketMQ 客户端，异步命令由 Java Consumer 领取，再通过内部 HTTP 调用 Python 执行面；只有结果成功校验并落库后才确认消息。这个桥接保留了 MQ 削峰、重投和 Java/Python 独立扩缩容边界。
+
+### 5.2 正确性边界
+
+- `ai_task` 是任务状态事实源，Redis Stream 只保存可过期的实时进度；
+- 消费 Inbox 和 `event_id` 唯一约束吸收 Outbox relay 的重复投递；
+- 结果落库前检查 `sourceRef`、`evidenceRef` 和 citation 引用闭包，孤立引用不会进入数据库；
+- 报告发布先持久化 `APPROVED`，文章服务暂时失败时可由用户重试；
+- `ai_published_article.report_id` 唯一，重复审核或网络重试返回同一 `article_id`；
+- 当前 Agent 是离线确定性提供器，只证明工作流与可靠性，不证明实时搜索或模型答案质量；
+- 持久化 checkpoint、节点恢复和真实模型/搜索属于下一阶段。
+
+## 6. 已知取舍(面试可主动说出来加分)
 
 - 点赞事实与计数投影当前共享一个 MySQL 实例，但已按表明确 interaction/article 所有权；后续拆库时协议保持不变
 - Outbox/投影目前只有日志和表状态，尚未接入积压量、失败率和最老事件时长监控
 - 单机 Redis,没起集群/哨兵
 - article 通过 OpenFeign 调 user 服务；熔断和 TraceId 透传仍待完善
 - 没接配置中心 / 注册中心,服务地址写在配置里
-- AI 当前只完成 Java 控制面、表结构和任务命令 Outbox；Python Agent、结果回传、SSE 和人工审核尚未实现
+- AI 已完成离线 Agent 初步闭环，但真实检索/模型调用、持久化 checkpoint、故障恢复和评测尚未实现
 
 **关于刻意不做的部分**:网关、注册中心、分布式事务、监控全家桶在这个业务规模下属于过度设计,没有引入。
 缓存一致性也没上 Canal binlog 兜底——社区场景下「双删 + MQ 广播」已足够,binlog 兜底是为不存在的问题加复杂度。
 工程的判断力体现在「该用什么」,也体现在「不该用什么」。
 
-## 6. 部署与迁移
+## 7. 部署与迁移
 
 - 本地混合模式通过 `scripts/setup-infra.ps1` 启动中间件，RocketMQ broker 广播宿主机地址，Java 服务在 IDE 或本机 JVM 中运行；
-- 全 Docker 模式通过 `scripts/start-docker.ps1` 切换 broker 容器地址、执行 Flyway、构建三个应用镜像并等待健康；
-- `sql/init.sql` 负责新数据卷的当前完整结构，Flyway 对历史数据库建立 V4 baseline，并已通过 V005 增加 AI 控制面；以后继续追加版本脚本；
+- 全 Docker 模式通过 `scripts/start-docker.ps1` 切换 broker 容器地址、执行 Flyway、构建四个 Java 应用和一个 Python Agent 镜像并等待健康；
+- `sql/init.sql` 负责新数据卷的当前完整结构，Flyway 对历史数据库建立 V4 baseline，V005 增加 AI 控制面，V006 增加 AI 报告—文章幂等发布投影；以后继续追加版本脚本；
 - 两种模式共用固定 `xplanet-net` 网络，但分别使用 `broker-host.conf` 和 `broker-docker.conf`，避免 broker 把客户端无法访问的地址注册到 NameServer；
-- CI 执行全 Reactor 单元测试、两份 Compose 配置解析和全部 PowerShell 脚本语法检查；真实 MySQL/Redis/RocketMQ 行为由 `scripts/smoke-test.ps1` 验证。
+- CI 执行 81 项 Java 测试、4 项 Python Agent 测试、两份 Compose 配置解析和全部 PowerShell 脚本语法检查；真实 MySQL/Redis/RocketMQ/Agent 行为由 `scripts/smoke-test.ps1` 验证。
