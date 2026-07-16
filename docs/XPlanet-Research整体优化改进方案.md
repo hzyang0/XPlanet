@@ -1,6 +1,6 @@
 # XPlanet Research 整体优化改进方案
 
-> 文档状态：架构基线 v1.8（实施中）
+> 文档状态：架构基线 v1.9（实施中）
 > 基线日期：2026-07-16  
 > 适用范围：当前 XPlanet Java 项目及计划新增的 AI Agent 能力  
 > 当前阶段：只确定方案和实施顺序，不代表目标能力已经完成
@@ -911,6 +911,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 | 版本 | 日期 | 变更 | 影响 |
 |---|---|---|---|
+| v1.9 | 2026-07-16 | 根依赖管理及 user/article/interaction 统一切换到 `com.mysql:mysql-connector-j` 当前坐标 | 消除旧 `mysql:mysql-connector-java` relocation 警告，降低后续依赖解析兼容风险 |
 | v1.8 | 2026-07-16 | 完成 CUR-P1-02：缓存重建改用 Redisson watchdog 语义的 `tryLock(wait, unit)`，新增2个缓存测试并修正文档 | DB 回源超过原固定3秒租约时，锁不会因租约到期提前释放造成并发重建 |
 | v1.7 | 2026-07-16 | 完成 LIKE-001：`like_relation` 条件状态机与 Outbox 同事务、带租约 relay、唯一事件持久化 Inbox/delta、`SKIP LOCKED` 批量计数投影，并新增迁移脚本和17个测试 | MQ 失败、重复、乱序和实例在发送/投影窗口崩溃不再依赖 Redis 临时状态恢复；Redis 退出点赞正确性链路 |
 | v1.6 | 2026-07-16 | 完成 CUR-P1-05 正确性部分：校验文章存在、父评论归属/删除状态和顶级层级，增加请求ID约束及6个单元测试 | 阻止跨文章回复、回复已删除评论、三层嵌套和向不存在文章写入评论；分页仍作为后续兼容改造 |
