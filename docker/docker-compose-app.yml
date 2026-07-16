@@ -38,6 +38,7 @@ services:
     container_name: xp-interaction
     restart: unless-stopped
     environment:
+      MYSQL_HOST: mysql
       REDIS_HOST: redis
       ROCKETMQ_NS: rocketmq-namesrv:9876
       TOKEN_SECRET: ${TOKEN_SECRET}
