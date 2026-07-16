@@ -2,15 +2,13 @@ package com.xplanet.article.service;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.xplanet.api.vo.UserProfileVO;
+import com.xplanet.article.client.UserServiceClient;
 import com.xplanet.common.response.R;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
 
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -18,7 +16,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <h3>这里演示了三个生产级要点:</h3>
  * <ol>
- *   <li><b>服务间调用</b>:用 RestTemplate 调 user 服务的 REST 接口(简单直接,没引入 Feign 增加复杂度)</li>
+ *   <li><b>服务间调用</b>:使用声明式 HTTP 客户端，超时和地址由配置统一管理</li>
  *   <li><b>调用结果缓存</b>:用户名很少变,用 Caffeine 本地缓存 5 分钟,避免每次渲染文章都打一次 user 服务</li>
  *   <li><b>降级容错</b>:user 服务不可用时返回兜底名("用户N"),不让文章服务跟着挂——
  *       这是微服务里「依赖隔离」的基本要求,一个服务的故障不应级联拖垮调用方</li>
@@ -26,12 +24,10 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class UserClient {
 
-    private final RestTemplate restTemplate = new RestTemplate();
-
-    @Value("${user-service.base-url:http://localhost:8083}")
-    private String userServiceBaseUrl;
+    private final UserServiceClient userServiceClient;
 
     /** 用户名本地缓存:userId -> userName,5 分钟过期 */
     private final Cache<Long, String> nameCache = Caffeine.newBuilder()
@@ -44,27 +40,34 @@ public class UserClient {
      */
     public String getUserName(Long userId) {
         if (userId == null) return "匿名用户";
-        return nameCache.get(userId, this::fetchFromUserService);
+        String cached = nameCache.getIfPresent(userId);
+        if (cached != null) return cached;
+
+        String remoteName = fetchFromUserService(userId);
+        if (remoteName != null) {
+            nameCache.put(userId, remoteName);
+            return remoteName;
+        }
+        // 降级值不进缓存，避免 user 服务恢复后仍持续返回兜底名。
+        return "用户" + userId;
     }
 
     private String fetchFromUserService(Long userId) {
         try {
-            String url = userServiceBaseUrl + "/api/user/" + userId;
-            R<Map<String, Object>> resp = restTemplate.exchange(
-                    url, HttpMethod.GET, null,
-                    new ParameterizedTypeReference<R<Map<String, Object>>>() {}
-            ).getBody();
-
-            if (resp != null && resp.getData() != null) {
-                Object nickname = resp.getData().get("nickname");
-                Object username = resp.getData().get("username");
-                if (nickname != null && !nickname.toString().isEmpty()) return nickname.toString();
-                if (username != null) return username.toString();
+            R<UserProfileVO> resp = userServiceClient.getUser(userId);
+            if (resp != null && resp.getCode() == 0 && resp.getData() != null) {
+                UserProfileVO user = resp.getData();
+                if (hasText(user.getNickname())) return user.getNickname();
+                if (hasText(user.getUsername())) return user.getUsername();
             }
         } catch (Exception e) {
             // 降级:user 服务不可用时不抛异常,返回兜底名,保证文章正常展示
             log.warn("调用 user 服务失败,降级处理 userId={}, err={}", userId, e.getMessage());
         }
-        return "用户" + userId;
+        return null;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 }

@@ -32,6 +32,17 @@ rocketmq:
     send-message-timeout: 3000
     retry-times-when-send-failed: 2
 
+user-service:
+  base-url: ${USER_SERVICE_URL:http://localhost:8083}
+
+feign:
+  client:
+    config:
+      user-service:
+        connect-timeout: 1000
+        read-timeout: 2000
+        logger-level: basic
+
 mybatis-plus:
   mapper-locations: classpath:mapper/*.xml
   global-config:
