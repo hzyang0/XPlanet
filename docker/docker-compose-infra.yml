@@ -66,3 +66,8 @@ services:
 volumes:
   xp-mysql-data:
   xp-redis-data:
+
+# 固定网络名，避免 Compose 目录名/项目名变化后应用服务找不到基础设施网络。
+networks:
+  default:
+    name: xplanet-net
