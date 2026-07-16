@@ -17,7 +17,7 @@
 | `xplanet-api` | - | Cross-service DTO and VO contracts |
 | `xplanet-user` | 8083 | User lookup, bcrypt password verification, and JWT/JWS issuing |
 | `xplanet-article` | 8081 | Articles, comments, two-level cache, user lookup, durable like-count projection |
-| `xplanet-interaction` | 8082 | Like state machine, Transactional Outbox, and recoverable RocketMQ relay |
+| `xplanet-interaction` | 8082 | Article validation, like state machine, Transactional Outbox, and recoverable RocketMQ relay |
 
 Important entrypoints:
 
@@ -98,7 +98,7 @@ Protected write flows require a token from `POST /api/user/login`. Verify the co
 - Architecture: root `pom.xml` -> module POMs -> `docs/ARCHITECTURE.md` -> application entrypoints and configs.
 - Persistence: `sql/init.sql` -> entity -> mapper/XML -> service transaction boundary.
 - Cache: article cache service -> Redis key constants -> MQ invalidation consumer -> update/delete path.
-- Likes: interaction state transition + Outbox transaction -> leased relay -> RocketMQ -> unique delta inbox -> transactional batch projection.
+- Likes: interaction validates the active article through typed OpenFeign -> state transition + Outbox transaction -> leased relay -> RocketMQ -> unique delta inbox -> transactional batch projection.
 - Authentication: user login -> token utility/filter in common -> protected controller endpoint.
 - Performance: benchmark scripts and claims -> implementation/configuration -> fresh measurements. Never repeat benchmark numbers without reproducing or clearly labeling their source.
 

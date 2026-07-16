@@ -27,7 +27,7 @@
 - **服务降级**:user 服务故障返回兜底作者名、MQ 故障由 Outbox 退避重试、重建抢锁失败降级查库
 
 **服务协作与业务**
-- **服务间调用**:article 调 user 服务取作者名,带调用缓存 + 降级
+- **服务间调用**:article 调 user 服务取作者名；interaction 点赞前轻量校验文章有效性，均配置显式超时
 - **文章列表分页 + 评论(两级嵌套)**:完整的社区业务闭环
 
 > 刻意没有引入网关、注册中心、分布式事务、监控全家桶等——在这个业务规模下属于过度设计。
@@ -60,8 +60,8 @@
 | `xplanet-common` | - | 公共响应、异常、常量 | 全局异常处理、缓存 key 规范 |
 | `xplanet-api` | - | DTO / VO | 跨服务数据契约 |
 | `xplanet-article` | 8081 | 文章服务 | **二级缓存、延迟双删、批量消费点赞落库、列表分页、评论、限流、调用 user 服务** |
-| `xplanet-interaction` | 8082 | 点赞服务 | **关系状态机、Transactional Outbox、可恢复 MQ relay** |
-| `xplanet-user` | 8083 | 用户服务 | 用户信息 CRUD(被 article 调用) |
+| `xplanet-interaction` | 8082 | 点赞服务 | **文章有效性校验、关系状态机、Transactional Outbox、可恢复 MQ relay** |
+| `xplanet-user` | 8083 | 用户服务 | 用户查询、bcrypt 登录与 JWT 签发 |
 
 ## 快速开始(本地混合模式)
 

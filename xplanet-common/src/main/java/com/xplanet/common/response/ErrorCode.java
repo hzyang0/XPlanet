@@ -17,6 +17,7 @@ public enum ErrorCode {
     USER_CREDENTIALS_INVALID(2003, "用户名或密码错误"),
 
     ARTICLE_NOT_FOUND(3001, "文章不存在"),
+    ARTICLE_SERVICE_UNAVAILABLE(3002, "文章服务暂时不可用"),
     COMMENT_PARENT_INVALID(3003, "父评论不存在、不属于当前文章或不是顶级评论"),
 
     FLOW_BLOCKED(5001, "请求过于频繁,请稍后再试"),

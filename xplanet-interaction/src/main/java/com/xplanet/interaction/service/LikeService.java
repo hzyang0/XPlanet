@@ -2,6 +2,7 @@ package com.xplanet.interaction.service;
 
 import com.xplanet.common.exception.BizException;
 import com.xplanet.common.response.ErrorCode;
+import com.xplanet.interaction.client.ArticleClient;
 import com.xplanet.interaction.persistence.LikeOutboxMapper;
 import com.xplanet.interaction.persistence.LikeRelationMapper;
 import lombok.RequiredArgsConstructor;
@@ -22,11 +23,15 @@ public class LikeService {
 
     private final LikeRelationMapper relationMapper;
     private final LikeOutboxMapper outboxMapper;
+    private final ArticleClient articleClient;
 
     /** 返回 true 表示本次从未点赞/已取消变为已点赞，false 表示重复点赞。 */
     @Transactional
     public boolean like(Long userId, Long articleId) {
         validate(userId, articleId);
+        if (!articleClient.existsActive(articleId)) {
+            throw new BizException(ErrorCode.ARTICLE_NOT_FOUND);
+        }
 
         int changed = relationMapper.reactivate(userId, articleId);
         if (changed == 0) {

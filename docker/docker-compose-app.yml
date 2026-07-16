@@ -41,6 +41,7 @@ services:
       MYSQL_HOST: mysql
       REDIS_HOST: redis
       ROCKETMQ_NS: rocketmq-namesrv:9876
+      ARTICLE_SERVICE_URL: http://article:8081
       TOKEN_SECRET: ${TOKEN_SECRET}
       TOKEN_EXPIRE_SECONDS: ${TOKEN_EXPIRE_SECONDS:-86400}
       TRUST_FORWARDED_HEADERS: ${TRUST_FORWARDED_HEADERS:-false}

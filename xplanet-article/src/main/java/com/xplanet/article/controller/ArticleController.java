@@ -27,6 +27,12 @@ public class ArticleController {
         return R.ok(articleService.getDetail(id));
     }
 
+    /** interaction 服务点赞前使用的轻量存在性校验。 */
+    @GetMapping("/{id}/exists")
+    public R<Boolean> exists(@PathVariable("id") Long id) {
+        return R.ok(articleService.existsActive(id));
+    }
+
     @GetMapping("/list")
     public R<PageResult<ArticleListItemVO>> list(
             @RequestParam(defaultValue = "1") int pageNum,

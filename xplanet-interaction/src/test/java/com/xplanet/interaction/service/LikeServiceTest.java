@@ -1,6 +1,8 @@
 package com.xplanet.interaction.service;
 
 import com.xplanet.common.exception.BizException;
+import com.xplanet.common.response.ErrorCode;
+import com.xplanet.interaction.client.ArticleClient;
 import com.xplanet.interaction.persistence.LikeOutboxMapper;
 import com.xplanet.interaction.persistence.LikeRelationMapper;
 import org.junit.jupiter.api.Test;
@@ -26,11 +28,15 @@ class LikeServiceTest {
     @Mock
     private LikeOutboxMapper outboxMapper;
 
+    @Mock
+    private ArticleClient articleClient;
+
     @InjectMocks
     private LikeService likeService;
 
     @Test
     void shouldCreateRelationAndOutboxForFirstLike() {
+        when(articleClient.existsActive(9L)).thenReturn(true);
         when(relationMapper.reactivate(1L, 9L)).thenReturn(0);
         when(relationMapper.insertLikedIfAbsent(1L, 9L)).thenReturn(1);
         when(outboxMapper.insertEvent(anyString(), eq(1L), eq(9L), eq(1))).thenReturn(1);
@@ -42,6 +48,7 @@ class LikeServiceTest {
 
     @Test
     void shouldReactivateCanceledRelationWithoutInsert() {
+        when(articleClient.existsActive(9L)).thenReturn(true);
         when(relationMapper.reactivate(1L, 9L)).thenReturn(1);
         when(outboxMapper.insertEvent(anyString(), eq(1L), eq(9L), eq(1))).thenReturn(1);
 
@@ -53,6 +60,7 @@ class LikeServiceTest {
 
     @Test
     void shouldNotWriteOutboxForDuplicateLike() {
+        when(articleClient.existsActive(9L)).thenReturn(true);
         when(relationMapper.reactivate(1L, 9L)).thenReturn(0);
         when(relationMapper.insertLikedIfAbsent(1L, 9L)).thenReturn(0);
 
@@ -82,6 +90,7 @@ class LikeServiceTest {
 
     @Test
     void shouldFailTransactionBoundaryWhenOutboxInsertIsMissing() {
+        when(articleClient.existsActive(9L)).thenReturn(true);
         when(relationMapper.reactivate(1L, 9L)).thenReturn(1);
         when(outboxMapper.insertEvent(anyString(), eq(1L), eq(9L), eq(1))).thenReturn(0);
 
@@ -95,5 +104,19 @@ class LikeServiceTest {
         assertThatThrownBy(() -> likeService.like(null, 9L)).isInstanceOf(BizException.class);
         assertThatThrownBy(() -> likeService.like(1L, 0L)).isInstanceOf(BizException.class);
         verify(outboxMapper, never()).insertEvent(anyString(), eq(1L), eq(9L), eq(1));
+    }
+
+    @Test
+    void shouldRejectMissingArticleBeforeChangingState() {
+        when(articleClient.existsActive(99L)).thenReturn(false);
+
+        assertThatThrownBy(() -> likeService.like(1L, 99L))
+                .isInstanceOf(BizException.class)
+                .extracting("code")
+                .isEqualTo(ErrorCode.ARTICLE_NOT_FOUND.getCode());
+
+        verify(relationMapper, never()).reactivate(1L, 99L);
+        verify(relationMapper, never()).insertLikedIfAbsent(1L, 99L);
+        verify(outboxMapper, never()).insertEvent(anyString(), eq(1L), eq(99L), eq(1));
     }
 }

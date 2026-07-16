@@ -77,6 +77,14 @@ public class ArticleServiceImpl implements ArticleService {
     }
 
     @Override
+    public boolean existsActive(Long articleId) {
+        if (articleId == null || articleId <= 0) {
+            return false;
+        }
+        return articleMapper.existsActive(articleId);
+    }
+
+    @Override
     public PageResult<ArticleListItemVO> list(int pageNum, int pageSize) {
         // 防御:页码、页大小合法化
         if (pageNum < 1) pageNum = 1;

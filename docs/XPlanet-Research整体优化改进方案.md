@@ -1,6 +1,6 @@
 # XPlanet Research 整体优化改进方案
 
-> 文档状态：架构基线 v2.1（实施中）
+> 文档状态：架构基线 v2.2（实施中）
 > 基线日期：2026-07-16  
 > 适用范围：当前 XPlanet Java 项目及计划新增的 AI Agent 能力  
 > 当前阶段：只确定方案和实施顺序，不代表目标能力已经完成
@@ -118,6 +118,7 @@
 | CUR-P0-05 | 登录不校验密码，Token 密钥硬编码 | 仅能作为 Demo，不能当生产鉴权 | 已完成 PasswordEncoder/bcrypt、标准 JWT/JWS 和外部密钥；刷新/撤销机制按需后续实现 |
 | CUR-P0-06 | 前端把服务端标题、摘要、评论等插入 `innerHTML` | 存储型 XSS 风险 | 已完成动态文本统一转义和动态 ID 数值约束；Vue升级后继续依赖框架默认转义 |
 | CUR-P0-07 | 全 Docker 模式下 RocketMQ broker 注册地址不正确；此前 article→user 地址和 Compose 网络也不稳定 | 容器应用无法稳定互通 | 已修复 Feign 容器地址和固定 `xplanet-net` 网络；仍需分离 RocketMQ host/container 广播地址并增加启动检查 |
+| CUR-P0-08 | 点赞只校验正数 ID，不校验文章存在和删除状态 | 接口返回成功但文章投影拒绝事件，关系状态和计数分裂 | 已增加 interaction→article 轻量 OpenFeign 校验；不存在文章不写关系和 Outbox，依赖故障时失败关闭 |
 
 #### P1：工程质量和性能
 
@@ -134,7 +135,7 @@
 
 #### P2：清理和可维护性
 
-- 当前已有41个单元测试，并新增真实 MySQL/Redis/RocketMQ 正常链路 smoke test；MQ 不可用、进程崩溃等自动化故障注入仍待补充；
+- 当前已有47个单元测试，并新增真实 MySQL/Redis/RocketMQ 正常链路 smoke test；MQ 不可用、进程崩溃等自动化故障注入仍待补充；
 - 已删除未使用的 Spring Cloud Alibaba BOM 和 `hutool-all`；保留的 Spring Cloud BOM 供 OpenFeign 使用；
 - 已删除未使用的缓存 Key、错误码和未赋值的响应 `traceId`；真正引入 TraceId 时应完成 HTTP/MQ 全链路透传；
 - 静态页面直接配置三个服务地址，缺少统一入口；
@@ -910,6 +911,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 | 版本 | 日期 | 变更 | 影响 |
 |---|---|---|---|
+| v2.2 | 2026-07-16 | interaction 点赞前通过轻量 OpenFeign 接口校验文章存在且未删除；新增依赖失败关闭、不存在文章零写入测试和真实冒烟断言 | 修复“关系已点赞但文章计数事件被拒绝”的状态分裂；取消点赞仍允许清理删除文章的历史关系 |
 | v2.1 | 2026-07-16 | 完成本地运行验证并新增 `scripts/smoke-test.ps1`：覆盖三服务健康、JWT登录、文章读取、点赞状态机与重复幂等、Outbox→RocketMQ→持久化投影、鉴权失败；测试后恢复业务状态 | 正常链路具备可重复的行为验收，不再依赖手工 curl 或只看启动日志；首次 MQ 消费者订阅冷启动由脚本容忍90秒 |
 | v2.0 | 2026-07-16 | 仓库瘦身：删除历史 gateway 编译产物、重复/失效启动验证文件和旧面试文档；移除未使用 Alibaba BOM、Hutool、错误码与空 traceId；同步项目级 xplanet-dev skill | 当前代码、文档、脚本和开发工作流只保留一套有效事实，减少依赖和历史残留干扰 |
 | v1.9 | 2026-07-16 | 根依赖管理及 user/article/interaction 统一切换到 `com.mysql:mysql-connector-j` 当前坐标 | 消除旧 `mysql:mysql-connector-java` relocation 警告，降低后续依赖解析兼容风险 |
