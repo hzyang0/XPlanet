@@ -15,7 +15,7 @@
 ┌───────┐   ┌────────────┐   ┌────────────────────┐
 │ MySQL │   │   Redis    │   │     RocketMQ       │
 │(主数据)│   │ L2 缓存 +  │   │  like(削峰)+      │
-│       │   │ 锁 + 计数  │   │  change(L1广播)   │
+│       │   │ 锁 + 限流  │   │  change(L1广播)   │
 └───────┘   └─────┬──────┘   └────────────────────┘
                   ▲
                   │  各实例进程内 Caffeine L1
@@ -90,23 +90,31 @@ B/C/D 的 L1 还是旧值。
 通过 `RocketMQMessageListener(messageModel = BROADCASTING)` 让所有实例都收到消息,
 各自清自己的 L1。**广播模式不会重复消费同一条消息(每个实例一份)。**
 
-## 4. 点赞削峰(写优化)
+## 4. 点赞状态机、Outbox 与批量投影
 
 ### 4.1 写入流程
 
 ```
 用户点赞 click
-  ↓ ~5ms
+  ↓ interaction 本地事务
 LikeService:
-  1. Redis SETNX 幂等键(60s TTL)
-  2. Redis SADD 用户已赞集合
-  3. Redis INCR 文章实时计数(给前端展示)
-  4. 异步发 MQ(顺序消息,按 userId hash 选 queue)
-  ↓ 接口返回
-LikeMessageConsumer(常驻):
-  1. MQ 幂等检查(actionId)
-  2. 累加到内存 buffer: Map<articleId, AtomicLong delta>
-  3. 每 500ms 或 200 条 flush 一次 → 合并 update DB
+  1. 条件迁移 like_relation 状态
+  2. 状态真实变化时写 like_outbox(eventId, delta)
+  3. 事务提交后接口返回
+  ↓
+LikeOutboxPublisher:
+  1. 用 owner + locked_until 抢占待发送事件
+  2. 同步投递 MQ;失败释放并指数退避
+  3. 发送成功后标记 SENT
+  ↓
+LikeMessageConsumer:
+  1. INSERT IGNORE like_count_delta(eventId唯一)
+  2. 重复消息直接成为幂等 no-op
+  ↓ 每 500ms
+LikeCountProjectionService:
+  1. SELECT ... FOR UPDATE SKIP LOCKED 获取批次
+  2. 按 articleId 求和
+  3. 更新 article.like_count 并在同事务标记事件完成
 ```
 
 ### 4.2 合并效果
@@ -117,27 +125,35 @@ LikeMessageConsumer(常驻):
 
 DB UPDATE QPS 大幅下降,行锁竞争减少。
 
-### 4.3 顺序保证
+### 4.3 为什么不依赖顺序消息
 
-`rocketMQTemplate.asyncSendOrderly(..., hashKey = userId, ...)`
-
-RocketMQ 按 hashKey 选择 MessageQueue,同一 hashKey 进同一队列 → 单消费者顺序消费。
-保证同一用户 "点赞 → 取消 → 再点赞" 不会乱序。
+`like_relation` 在数据库条件更新中决定状态是否真正变化，只有变化才产生 `+1/-1`。
+计数事件只做整数求和，加法满足交换律，因此 MQ 重复或乱序不影响最终计数。
+顺序投递可以作为吞吐/局部性优化，但不再承担正确性职责。
 
 ### 4.4 幂等
 
-每条消息携带 UUID actionId,消费端 `SETNX xp:mq:like:idem:{actionId}` TTL 10min。
-重投 / 重启重消费都会被吞掉。
+每条消息携带 UUID eventId，`like_count_delta.event_id` 有数据库唯一约束。
+Outbox relay 在“发送成功但标记前崩溃”时允许重复投递，消费端持久化唯一约束吸收重复；
+Redis SETNX 不再作为最终保证。
+
+### 4.5 故障恢复
+
+- 状态更新失败：本地事务整体回滚，不产生 Outbox；
+- MQ 不可用：Outbox 保留事件并指数退避；
+- relay 发送后崩溃：租约到期后重发，消费端去重；
+- 消费实例崩溃：未确认消息由 MQ 重投；
+- 投影实例崩溃：计数更新和事件标记处于同一事务，整体提交或整体回滚；
+- 多实例投影：`SKIP LOCKED` 避免处理同一批数据库行。
 
 ## 5. 已知取舍(面试可主动说出来加分)
 
-- LikeMessageConsumer 用内存 buffer 合并落库,实例 crash 会丢失尚未 flush 的 delta(可改成定时持久化或落 Redis Stream 共享缓冲)
-- 没做认证鉴权(只用 X-User-Id header demo)
+- 点赞事实与计数投影当前共享一个 MySQL 实例，但已按表明确 interaction/article 所有权；后续拆库时协议保持不变
+- Outbox/投影目前只有日志和表状态，尚未接入积压量、失败率和最老事件时长监控
 - 单机 Redis,没起集群/哨兵
-- authorName 在 article 内简化拼接,未真正走 user 服务聚合
+- article 通过 OpenFeign 调 user 服务；熔断和 TraceId 透传仍待完善
 - 没接配置中心 / 注册中心,服务地址写在配置里
 
 **关于刻意不做的部分**:网关、注册中心、分布式事务、监控全家桶在这个业务规模下属于过度设计,没有引入。
 缓存一致性也没上 Canal binlog 兜底——社区场景下「双删 + MQ 广播」已足够,binlog 兜底是为不存在的问题加复杂度。
 工程的判断力体现在「该用什么」,也体现在「不该用什么」。
-

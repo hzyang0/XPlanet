@@ -26,16 +26,22 @@ wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8081
 
 (对照实验:把 ArticleCacheManager.init() 里 maximumSize 改成 0 即可关闭 L1)
 
-## 2. 点赞写入(测 MQ 削峰)
+## 2. 点赞写入(测 Outbox + MQ + 持久化投影)
 
 ```bash
 wrk -t8 -c500 -d30s -s benchmark/like.lua http://localhost:8082
 ```
 
-期望:
-- 接口侧 QPS ~ 8k+(全异步,只写 Redis + 发 MQ)
-- DB 侧 article 表 UPDATE QPS 约 接口 QPS 的 1/5 ~ 1/10(批量合并效果)
-- 通过 Grafana 对比 `mysql_global_status_com_update` 与接口 QPS
+当前 `like.lua` 只适合验证“同一用户重复点赞是幂等 no-op”，不能测完整写链路性能。
+正式压测需要准备足够多的用户/Token，并让点赞与取消真实交替，至少记录：
+
+- 状态真实变化请求数、重复 no-op 数、业务失败数；
+- `like_outbox` 待发送数量、最老事件年龄和重试次数；
+- `like_count_delta` 待投影/拒绝数量；
+- interaction 接口 P50/P95/P99，Outbox 到投影完成的端到端延迟；
+- `article.like_count` 与 `like_relation status=1` 聚合结果是否一致。
+
+在多用户脚本和指标采集补齐前，不填写预期 QPS，也不把 HTTP 200 或重复 no-op 计为有效点赞吞吐。
 
 ## 记录数据
 

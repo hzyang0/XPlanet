@@ -23,21 +23,6 @@ public final class CacheKeys {
         return "xp:lock:article:rebuild:" + articleId;
     }
 
-    /** 点赞幂等: xp:like:idem:{userId}:{articleId} */
-    public static String likeIdempotent(Long userId, Long articleId) {
-        return "xp:like:idem:" + userId + ":" + articleId;
-    }
-
-    /** 文章点赞计数(累加缓冲,定期落库): xp:article:like:cnt:{articleId} */
-    public static String articleLikeCount(Long articleId) {
-        return "xp:article:like:cnt:" + articleId;
-    }
-
-    /** 用户对文章已点赞标记位(Set): xp:user:liked:{userId} */
-    public static String userLikedSet(Long userId) {
-        return "xp:user:liked:" + userId;
-    }
-
     /** 空值缓存标记 */
     public static final String EMPTY_VALUE = "__EMPTY__";
 }

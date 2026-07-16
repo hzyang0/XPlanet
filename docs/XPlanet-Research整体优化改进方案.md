@@ -1,6 +1,6 @@
 # XPlanet Research 整体优化改进方案
 
-> 文档状态：架构基线 v1.6（实施中）
+> 文档状态：架构基线 v1.7（实施中）
 > 基线日期：2026-07-16  
 > 适用范围：当前 XPlanet Java 项目及计划新增的 AI Agent 能力  
 > 当前阶段：只确定方案和实施顺序，不代表目标能力已经完成
@@ -88,8 +88,8 @@
 | `xplanet-common` | - | 响应、异常、鉴权、限流、公共常量 | 已实现，待完善 |
 | `xplanet-api` | - | Java 服务间 DTO/VO 契约 | 已实现 |
 | `xplanet-user` | 8083 | 用户查询、简化登录和 Token 签发 | 已实现，待修复安全问题 |
-| `xplanet-article` | 8081 | 文章、评论、热榜、二级缓存、点赞消息消费 | 已实现，部分链路待修复 |
-| `xplanet-interaction` | 8082 | 点赞/取消、Redis 状态、RocketMQ 生产 | 已实现，可靠性待重构 |
+| `xplanet-article` | 8081 | 文章、评论、热榜、二级缓存、点赞持久化投影 | 已实现，缓存链路仍待完善 |
+| `xplanet-interaction` | 8082 | 点赞状态机、Transactional Outbox、MQ relay | 已实现 |
 | `xplanet-web` | 静态页 | 社区功能演示 | 已实现，计划升级 |
 
 基础设施为 MySQL、Redis、RocketMQ，文章热点读使用 Caffeine + Redis 二级缓存，Redisson 用于缓存重建锁。
@@ -100,7 +100,7 @@
 
 1. 文章详情采用 Caffeine L1 + Redis L2，覆盖空值缓存、TTL 抖动和热点重建锁；
 2. 文章修改使用 Cache Aside、事务提交后通知、多实例 L1 广播和延迟二次删除思路；
-3. 点赞使用 Redis 快速业务状态、RocketMQ 异步化和 Redis Hash 聚合计数；
+3. 点赞使用数据库条件状态迁移、Transactional Outbox、RocketMQ 和持久化增量投影；
 4. Redis Lua 实现轻量固定窗口限流；
 5. 用户服务不可用时，文章展示能使用缓存或兜底作者名；
 6. 工程规模较小，适合继续演进，而不需要推倒重做。
@@ -111,10 +111,10 @@
 
 | 编号 | 问题 | 影响 | 目标处理 |
 |---|---|---|---|
-| CUR-P0-01 | 点赞生产端异步发送失败只记录日志，但接口已返回成功 | Redis 状态与数据库永久不一致 | 数据库状态迁移 + Outbox |
-| CUR-P0-02 | 生产端 orderly，消费者却是 `CONCURRENTLY` | 当前设计不能保证同用户顺序 | 重构为源端状态机后让计数事件可交换；旧方案修复前不能宣称顺序保证 |
-| CUR-P0-03 | 消费端先更新 `article_like`，再写 Redis 缓冲；后一步失败后重试会因状态相同直接返回 | 点赞总数可能永久少算 | 使用持久化事件投影和 Inbox 去重 |
-| CUR-P0-04 | Redis `RENAME` 后实例崩溃，没有扫描和恢复临时 flushing key | 聚合增量可能滞留 | 使用持久化投影表或实现可恢复批次协议 |
+| CUR-P0-01 | 点赞生产端异步发送失败只记录日志，但接口已返回成功 | Redis 状态与数据库永久不一致 | 已完成关系状态与 Outbox 同事务提交，relay 失败退避重试 |
+| CUR-P0-02 | 生产端 orderly，消费者却是 `CONCURRENTLY` | 旧设计不能保证同用户顺序 | 已由源端状态机产生确认 delta；加法可交换，正确性不再依赖消息顺序 |
+| CUR-P0-03 | 消费端先更新旧明细，再写 Redis 缓冲 | 后一步失败会永久少算 | 已改为 `event_id` 唯一的持久化 delta，重复消息不重复计数 |
+| CUR-P0-04 | Redis `RENAME` 后实例崩溃，没有完整恢复协议 | 聚合增量可能滞留 | 已改为数据库行锁批次，计数更新和事件标记处于同一事务 |
 | CUR-P0-05 | 登录不校验密码，Token 密钥硬编码 | 仅能作为 Demo，不能当生产鉴权 | 已完成 PasswordEncoder/bcrypt、标准 JWT/JWS 和外部密钥；刷新/撤销机制按需后续实现 |
 | CUR-P0-06 | 前端把服务端标题、摘要、评论等插入 `innerHTML` | 存储型 XSS 风险 | 已完成动态文本统一转义和动态 ID 数值约束；Vue升级后继续依赖框架默认转义 |
 | CUR-P0-07 | 全 Docker 模式下 RocketMQ broker 注册地址不正确；此前 article→user 地址和 Compose 网络也不稳定 | 容器应用无法稳定互通 | 已修复 Feign 容器地址和固定 `xplanet-net` 网络；仍需分离 RocketMQ host/container 广播地址并增加启动检查 |
@@ -129,7 +129,7 @@
 | CUR-P1-04 | 限流信任任意 `X-Forwarded-For` | 客户端可伪造 IP | 已完成可信代理开关：默认使用 RemoteAddr，仅在受控代理部署显式开启后读取转发头 |
 | CUR-P1-05 | 评论一次加载全部数据，原实现未校验父评论归属 | 数据串联错误和大列表性能问题 | 已校验文章存在、父评论归属/删除状态并强制两级模型；列表分页仍待实现 |
 | CUR-P1-06 | 热榜全表扫描；代码没有时间衰减；浏览数没有可靠更新 | 文档描述和实际排名逻辑不一致 | 事件增量 + 周期校准 + 明确评分公式 |
-| CUR-P1-07 | Redis 点赞实时计数只写不读 | 无效复杂度，前端仍读取数据库计数 | 删除或接入统一计数读模型 |
+| CUR-P1-07 | Redis 点赞实时计数只写不读 | 无效复杂度，前端仍读取数据库计数 | 已删除旧 Redis 点赞集合、实时计数和 Hash 缓冲写链路 |
 | CUR-P1-08 | 业务错误普遍返回 HTTP 200 | 监控和压测容易把失败当成功 | 逐步规范 HTTP 状态与业务码边界 |
 
 #### P2：清理和可维护性
@@ -245,9 +245,9 @@ flowchart LR
 |---|---|
 | user | `user`、认证相关表 |
 | article | `article`、`comment`、热榜投影、文章缓存失效 Outbox |
-| interaction | `article_like`、`like_outbox` |
+| interaction | `like_relation`、`like_outbox` |
 | ai | `ai_task`、`ai_run`、`ai_report`、`source_document`、`evidence_chunk`、`report_citation`、`model_usage`、`ai_outbox` |
-| article 投影 | `like_count_delta`、`consumer_inbox`，用于可靠更新文章点赞总数 |
+| article 投影 | `like_count_delta`，其 `event_id` 唯一约束同时承担消费 Inbox 作用 |
 
 跨服务不能直接依赖对方数据表作为稳定接口。MVP如果为了开发效率进行只读查询，必须在代码和文档中标记为待移除的过渡方案。
 
@@ -465,11 +465,12 @@ WHERE id = ? AND status = ? AND version = ?;
 ```text
 POST/DELETE like
   → interaction 本地事务
-      → 条件更新 article_like 状态
+      → 条件更新 like_relation 状态
       → 只有状态变化时插入 like_outbox(eventId, articleId, delta)
-  → afterCommit 更新/删除 Redis 状态缓存
-  → Outbox Relay 投递 LIKE_STATE_CHANGED
-  → article 消费者把事件幂等写入 like_count_delta
+  → Outbox Relay 抢占带租约的事件并投递 LIKE_STATE_CHANGED
+      → 失败按指数退避释放重试
+      → 发送成功后标记已发送
+  → article 消费者按唯一 eventId 幂等写入 like_count_delta
   → 定时聚合未处理 delta
       → 按 articleId 合并
       → 更新 article.like_count
@@ -483,9 +484,9 @@ POST/DELETE like
 | 层次 | 手段 | 作用 |
 |---|---|---|
 | 请求幂等 | `Idempotency-Key` 或用户/文章状态机 | 防止前端重复提交 |
-| 业务幂等 | `article_like(user_id, article_id)` 唯一约束 + 条件状态迁移 | 最终业务事实 |
+| 业务幂等 | `like_relation(user_id, article_id)` 主键 + 条件状态迁移 | 最终业务事实 |
 | 消息幂等 | Outbox `event_id` + 消费 Inbox 唯一约束 | 防 MQ 重投 |
-| Redis SETNX | 可保留为快速过滤 | 只做性能优化，不做最终保证 |
+| Redis SETNX | 当前删除 | 不再让短期缓存参与正确性判断；有实测收益后才作为纯性能层引入 |
 
 ### 8.4 为什么不保留当前 Redis Hash + RENAME 作为最终方案
 
@@ -761,7 +762,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 ### Phase 3：后端正确性重构
 
-- [ ] 点赞改为数据库状态机 + Outbox + 持久化计数投影；
+- [x] 点赞改为数据库状态机 + Outbox + 持久化计数投影；
 - [ ] 缓存失效改为可靠事件和可重试延迟删除；
 - [ ] 修正 Redisson 锁语义；
 - [x] 用户密码哈希校验、标准 JWT/JWS 和外部化 Token 密钥；
@@ -910,6 +911,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 | 版本 | 日期 | 变更 | 影响 |
 |---|---|---|---|
+| v1.7 | 2026-07-16 | 完成 LIKE-001：`like_relation` 条件状态机与 Outbox 同事务、带租约 relay、唯一事件持久化 Inbox/delta、`SKIP LOCKED` 批量计数投影，并新增迁移脚本和17个测试 | MQ 失败、重复、乱序和实例在发送/投影窗口崩溃不再依赖 Redis 临时状态恢复；Redis 退出点赞正确性链路 |
 | v1.6 | 2026-07-16 | 完成 CUR-P1-05 正确性部分：校验文章存在、父评论归属/删除状态和顶级层级，增加请求ID约束及6个单元测试 | 阻止跨文章回复、回复已删除评论、三层嵌套和向不存在文章写入评论；分页仍作为后续兼容改造 |
 | v1.5 | 2026-07-16 | 基础设施和应用 Compose 统一使用固定 `xplanet-net` 网络，删除废弃的 Compose `version` 字段 | Compose 项目名或工作目录变化时，应用仍能定位基础设施网络；消除版本警告 |
 | v1.4 | 2026-07-16 | 完成 CUR-P1-04：按 IP 限流默认使用连接地址，仅在可信代理模式读取首个转发地址，并新增4个单元测试 | 客户端不能再通过自行设置 `X-Forwarded-For` 绕过默认限流维度 |

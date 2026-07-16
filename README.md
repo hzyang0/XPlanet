@@ -18,13 +18,13 @@
 
 **高并发写**
 - **RocketMQ 削峰**:点赞写入异步化,消费端按文章聚合批量落库,削减 DB 写压力
-- **Redis 共享缓冲**:点赞缓冲用 Redis Hash(HINCRBY 原子累加),实例崩溃不丢未落库增量
-- **幂等 + 顺序**:actionId 去重防重投,按 userId 分区保证同用户操作有序
+- **Transactional Outbox**:点赞关系状态和待发送事件同事务提交,MQ 不可用时可恢复重试
+- **持久化幂等投影**:eventId 唯一去重,按文章批量合并 delta,计数更新与事件完成标记同事务
 
 **并发控制与容错**
 - **Redisson 分布式锁**:缓存击穿时串行化重建,只放一个线程回源
 - **轻量限流**:注解 + Redis Lua 固定窗口,防接口被刷(比 Sentinel 轻、原理透明)
-- **服务降级**:user 服务故障返回兜底作者名、Redis 异常友好提示、重建抢锁失败降级查库
+- **服务降级**:user 服务故障返回兜底作者名、MQ 故障由 Outbox 退避重试、重建抢锁失败降级查库
 
 **服务协作与业务**
 - **服务间调用**:article 调 user 服务取作者名,带调用缓存 + 降级
@@ -47,7 +47,7 @@
      ┌──────┴───────┐   ┌──────────┐   ┌─────────────┐
      │ MySQL        │   │  Redis   │   │  RocketMQ   │
      │ (主数据)      │   │(L2缓存+  │   │(点赞削峰 +   │
-     │              │   │ 锁+计数) │   │ L1广播失效) │
+     │              │   │ 锁+限流) │   │ L1广播失效) │
      └──────────────┘   └──────────┘   └─────────────┘
 ```
 
@@ -60,7 +60,7 @@
 | `xplanet-common` | - | 公共响应、异常、常量 | 全局异常处理、缓存 key 规范 |
 | `xplanet-api` | - | DTO / VO | 跨服务数据契约 |
 | `xplanet-article` | 8081 | 文章服务 | **二级缓存、延迟双删、批量消费点赞落库、列表分页、评论、限流、调用 user 服务** |
-| `xplanet-interaction` | 8082 | 点赞服务 | **MQ 顺序消息、幂等、削峰、Redis 降级** |
+| `xplanet-interaction` | 8082 | 点赞服务 | **关系状态机、Transactional Outbox、可恢复 MQ relay** |
 | `xplanet-user` | 8083 | 用户服务 | 用户信息 CRUD(被 article 调用) |
 
 ## 快速开始(本地混合模式)
@@ -86,6 +86,9 @@ docker compose -f docker/docker-compose-infra.yml ps
 启动 MySQL(3306,自动建表+测试数据)、Redis(6379)、RocketMQ(namesrv 9876 + broker 10911)。
 如果复用旧 MySQL 数据卷，请在启动新版 user 服务前执行一次
 [`sql/migrations/V002__add_user_password_hash.sql`](sql/migrations/V002__add_user_password_hash.sql)；新数据卷会由 `init.sql` 直接创建字段。
+从旧点赞链路升级时还需停服执行
+[`sql/migrations/V003__reliable_like_outbox_projection.sql`](sql/migrations/V003__reliable_like_outbox_projection.sql)，
+核对迁移结果后再启动新版 interaction/article 服务。
 
 ### 2. 编译
 
@@ -163,7 +166,7 @@ xplanet/
   与「应用可水平扩展」是两回事(应用层已按无状态多实例设计)。见 `docs/HA-AND-DEGRADE.md`
 - Token 使用标准 JWT/JWS 库签发和校验，签名密钥通过 `TOKEN_SECRET` 外部注入
 - 登录使用 Spring PasswordEncoder 校验 bcrypt 哈希；演示账号共用初始密码，仅用于本地数据
-- 点赞计数批量合并落库,极端情况(flush 前实例崩)靠 Redis 共享缓冲 + 明细表唯一约束兜底
+- 点赞以 `like_relation` 为事实源,通过 Outbox 至少一次投递；消费端唯一事件表和事务批量投影吸收重复并支持崩溃恢复
 
 这些是有意识的取舍,不是不知道,面试时可展开聊改造方案。
 

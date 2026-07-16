@@ -40,6 +40,11 @@ rocketmq:
     send-message-timeout: 3000
     retry-times-when-send-failed: 2
 
+like:
+  projection:
+    interval-ms: ${LIKE_PROJECTION_INTERVAL_MS:500}
+    batch-size: ${LIKE_PROJECTION_BATCH_SIZE:1000}
+
 user-service:
   base-url: ${USER_SERVICE_URL:http://localhost:8083}
 
