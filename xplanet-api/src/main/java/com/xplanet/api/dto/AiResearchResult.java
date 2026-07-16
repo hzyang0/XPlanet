@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -28,6 +29,8 @@ public class AiResearchResult implements Serializable {
     private List<Evidence> evidence = new ArrayList<>();
     @Builder.Default
     private List<Citation> citations = new ArrayList<>();
+    @Builder.Default
+    private List<Usage> usage = new ArrayList<>();
 
     @Data
     @NoArgsConstructor
@@ -59,5 +62,19 @@ public class AiResearchResult implements Serializable {
         private String claimId;
         private String evidenceRef;
         private Double supportScore;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Usage implements Serializable {
+        private String nodeName;
+        private String provider;
+        private String model;
+        private Integer inputTokens;
+        private Integer outputTokens;
+        private BigDecimal estimatedCost;
+        private Long latencyMs;
+        private Integer retryCount;
     }
 }

@@ -34,10 +34,12 @@
 - **任务状态与请求幂等**：`xplanet-ai` 管理私有研究任务、运行实例、预算上限和版本条件状态迁移
 - **可靠长任务命令**：任务/运行/Outbox 同事务提交，带租约 relay 向 RocketMQ 投递请求与取消命令
 - **可追溯 Agent 图**：`xplanet-agent` 用 LangGraph 执行输入校验、规划、研究、证据整理、写作和 Critic，工具次数、来源数和总超时均有上限
+- **可恢复长任务**：每个节点把版本化 checkpoint 写入 MySQL，Agent 崩溃后由 RocketMQ 重投并从下一节点恢复，失败最多尝试 3 次后进入明确 `FAILED`
 - **证据与进度闭环**：来源、证据、引用和报告在同一事务校验落库；步骤进度写 Redis Stream，并由 `xplanet-ai` 通过 SSE 输出
+- **评测与指标**：固定 JSONL 数据集离线评测结构成功率与引用索引有效性；Micrometer 暴露执行结果、节点耗时和 checkpoint 指标
 - **Human-in-the-loop**：报告必须由任务所有者确认，随后通过内部 OpenFeign 调用幂等发布为文章；重复确认返回同一文章
 
-> 当前 Agent 使用离线确定性资料提供器，用于验证编排、可靠性和可追溯闭环；尚未接入真实搜索和大模型，不能把演示报告描述为实时互联网研究结果。
+> 默认 `offline-demo` 用于零成本、可复现验收；另提供显式启用的 `openai-web` Responses API + Web Search 适配器。真实路径需要 API Key，目前只完成模拟契约测试，不能把离线评测结果描述为联网回答质量或事实正确率。
 
 > 刻意没有引入网关、注册中心、分布式事务、监控全家桶等——在这个业务规模下属于过度设计。
 > 高可用(集群/哨兵/多实例)作为演进方向写在 [`docs/HA-AND-DEGRADE.md`](docs/HA-AND-DEGRADE.md),按需扩展。
@@ -68,14 +70,14 @@
 | `xplanet-article` | 8081 | 文章服务 | **二级缓存、延迟双删、批量消费点赞落库、列表分页、评论、限流、调用 user 服务** |
 | `xplanet-interaction` | 8082 | 点赞服务 | **文章有效性校验、关系状态机、Transactional Outbox、可恢复 MQ relay** |
 | `xplanet-user` | 8083 | 用户服务 | 用户查询、bcrypt 登录与 JWT 签发 |
-| `xplanet-ai` | 8084 | AI 控制面 | **私有任务、请求幂等、预算、可靠命令、Agent 调度、结果事务落库、SSE、审核发布** |
-| `xplanet-agent` | 8000（仅内部） | Python 执行面 | **LangGraph 有界工作流、取消检查、来源/证据/引用生成、进度回调** |
+ | `xplanet-ai` | 8084 | AI 控制面 | **私有任务、请求幂等、预算、可靠命令、checkpoint、模型用量、指标、SSE、审核发布** |
+ | `xplanet-agent` | 8000（仅内部） | Python 执行面 | **LangGraph 有界工作流、断点恢复、离线/联网 Provider、来源/证据/引用生成** |
 
 ## 快速开始
 
 ### 方式一：本地混合模式（开发推荐）
 
-推荐:中间件用 Docker,3 个服务用 IDE / 命令行跑(便于断点调试)。
+推荐:中间件用 Docker，Python Agent 和 4 个 Java 服务用 IDE / 命令行跑（便于断点调试）。
 
 先设置所有服务共享的 JWT 签名密钥（至少32字符，实际使用请生成随机值）：
 
@@ -94,7 +96,7 @@ Docker Compose 用户可复制 `.env.example` 为 `.env` 后替换其中的示�
 
 脚本会启动 MySQL(3306)、Redis(6379)、RocketMQ(namesrv 9876 + broker 10911)，
 选择供宿主机 JVM 使用的 broker 广播地址，等待 MySQL 就绪并执行 Flyway。
-当前完整表结构以 V004 为 baseline，后续新增 V005 及以上迁移会自动按顺序执行，无需手工修改数据库。
+当前完整表结构以 V004 为 baseline，V005～V007 增加 AI 控制面、幂等发布和持久化 checkpoint；后续迁移会自动按顺序执行，无需手工修改数据库。
 
 #### 2. 编译
 
@@ -112,6 +114,14 @@ python -m venv .venv
 $env:AGENT_INTERNAL_TOKEN=$env:TOKEN_SECRET
 $env:AI_CONTROL_URL="http://localhost:8084"
 .\.venv\Scripts\python.exe -m uvicorn xplanet_agent.api:app --host 0.0.0.0 --port 8000
+```
+
+默认离线模式无需模型密钥。只有明确需要联网研究并接受外部 API 成本时才设置：
+
+```powershell
+$env:AGENT_PROVIDER="openai-web"
+$env:OPENAI_API_KEY="replace-with-your-key"
+$env:OPENAI_MODEL="gpt-5.6-terra"
 ```
 
 IDEA 直接 Run:`ArticleApplication`(8081)、`InteractionApplication`(8082)、`UserApplication`(8083)、`AiApplication`(8084)。
@@ -155,8 +165,20 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 .\scripts\smoke-test.ps1
 ```
 
-脚本会验证健康检查、登录、AI 任务私有读取/幂等/跨用户隔离、Agent 执行、7 个进度事件、来源—证据—引用闭包、人工审核、重复发布幂等和取消，
+脚本会验证健康检查、登录、AI 任务私有读取/幂等/跨用户隔离、Agent 执行、7 个进度与 checkpoint、Prometheus 执行/恢复指标、来源—证据—引用闭包、人工审核、重复发布幂等和取消，
 同时覆盖文章查询、可靠缓存失效 Outbox、重复点赞幂等、MQ 消费、持久化计数投影和未登录拦截。脚本会恢复原点赞状态和文章计数；研究任务和发布文章作为验收记录保留。
+
+验证 Agent 在节点提交后进程崩溃仍能恢复：
+
+```powershell
+.\scripts\test-agent-recovery.ps1
+```
+
+运行不调用外部模型的固定数据集评测：
+
+```powershell
+.\.venv\Scripts\python.exe -m xplanet_agent.evaluation --dataset xplanet-agent/eval/golden_dataset.jsonl
+```
 
 ### 方式二：全 Docker 模式（演示推荐）
 
@@ -198,11 +220,12 @@ xplanet/
 ├── sql/
 │   ├── init.sql                   # 新数据卷完整结构
 │   └── migrations/                # Flyway 增量迁移
-├── scripts/                 # 构建、迁移、两种模式启动、端到端冒烟测试
+├── scripts/                 # 构建、迁移、启动、端到端与故障恢复测试
 ├── .github/workflows/ci.yml # 单测、Compose 与脚本语法检查
 ├── benchmark/               # wrk 压测脚本
 └── docs/
     ├── ARCHITECTURE.md
+    ├── EXPERIMENTS.md
     └── benchmark-results.md
 ```
 
@@ -213,7 +236,7 @@ xplanet/
 - Token 使用标准 JWT/JWS 库签发和校验，签名密钥通过 `TOKEN_SECRET` 外部注入
 - 登录使用 Spring PasswordEncoder 校验 bcrypt 哈希；演示账号共用初始密码，仅用于本地数据
 - 点赞以 `like_relation` 为事实源,通过 Outbox 至少一次投递；消费端唯一事件表和事务批量投影吸收重复并支持崩溃恢复
-- AI 已完成离线确定性 Agent 的初步闭环；真实检索、模型调用、持久化 checkpoint、故障恢复和质量评测仍是下一阶段
+- AI 已完成离线确定性闭环、持久化 checkpoint、崩溃恢复、有限重试、基础评测与指标；联网 Provider 尚未用真实密钥验收，语义引用核验、RAG 和完整可观测平台仍是后续项
 
 这些是有意识的取舍,不是不知道,面试时可展开聊改造方案。
 

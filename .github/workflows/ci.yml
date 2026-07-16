@@ -39,3 +39,4 @@ jobs:
         run: |
           python -m pip install -e './xplanet-agent[test]'
           python -m pytest xplanet-agent
+          python -m xplanet_agent.evaluation --dataset xplanet-agent/eval/golden_dataset.jsonl

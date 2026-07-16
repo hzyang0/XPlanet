@@ -4,6 +4,7 @@ import com.xplanet.ai.domain.AiTaskStatus;
 import com.xplanet.ai.persistence.AiTaskMapper;
 import com.xplanet.ai.persistence.AiTaskRecord;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -12,6 +13,9 @@ import org.springframework.transaction.annotation.Transactional;
 public class AiTaskStateService {
 
     private final AiTaskMapper taskMapper;
+
+    @Value("${ai.agent.max-attempts:3}")
+    private int maxAttempts;
 
     @Transactional
     public boolean begin(Long taskId, String runId) {
@@ -41,6 +45,12 @@ public class AiTaskStateService {
         }
         String abbreviated = error == null ? "agent execution failed"
                 : error.substring(0, Math.min(1000, error.length()));
+        Integer attempt = taskMapper.findRunAttempt(taskId, runId);
+        if (attempt != null && attempt >= maxAttempts) {
+            taskMapper.markFailed(taskId, runId, abbreviated);
+            taskMapper.markRunFailed(taskId, runId, abbreviated);
+            return;
+        }
         taskMapper.markRetrying(taskId, runId, abbreviated);
         taskMapper.markRunRetrying(taskId, runId, abbreviated);
     }

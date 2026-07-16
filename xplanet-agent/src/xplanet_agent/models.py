@@ -43,6 +43,17 @@ class CitationResult(BaseModel):
     supportScore: float = Field(ge=0, le=1)
 
 
+class ModelUsageResult(BaseModel):
+    nodeName: str
+    provider: str
+    model: str
+    inputTokens: int = Field(default=0, ge=0)
+    outputTokens: int = Field(default=0, ge=0)
+    estimatedCost: float = Field(default=0, ge=0)
+    latencyMs: int = Field(default=0, ge=0)
+    retryCount: int = Field(default=0, ge=0)
+
+
 class ResearchResult(BaseModel):
     taskId: int
     runId: str
@@ -53,3 +64,4 @@ class ResearchResult(BaseModel):
     sources: list[SourceResult]
     evidence: list[EvidenceResult]
     citations: list[CitationResult]
+    usage: list[ModelUsageResult] = Field(default_factory=list)

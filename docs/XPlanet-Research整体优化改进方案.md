@@ -138,7 +138,7 @@
 
 #### P2：清理和可维护性
 
-- 当前已有81个 Java 单元测试、4个 Python Agent 测试，并新增真实 MySQL/Redis/RocketMQ/Agent 正常链路 smoke test；缓存失效已完成 broker 停止/恢复故障注入，Agent 进程崩溃恢复自动化仍待补充；
+- 当前已有87个 Java 单元测试、10个 Python Agent 测试和10条固定离线评测，并新增真实 MySQL/Redis/RocketMQ/Agent 正常链路 smoke test；缓存失效已完成 broker 停止/恢复故障注入，Agent 已完成节点 checkpoint 后强退、容器重启和 MQ 重投恢复自动化；
 - 已删除未使用的 Spring Cloud Alibaba BOM 和 `hutool-all`；保留的 Spring Cloud BOM 供 OpenFeign 使用；
 - 已删除未使用的缓存 Key、错误码和未赋值的响应 `traceId`；真正引入 TraceId 时应完成 HTTP/MQ 全链路透传；
 - 静态页面直接配置三个服务地址，缺少统一入口；
@@ -164,6 +164,8 @@
 | ADR-011 | Gateway、Qdrant、MinIO、监控平台按阶段引入 | 已接受 | 先完成核心闭环，再增加运维复杂度 |
 | ADR-012 | 不在 Agent MVP 同时升级 Spring Boot 大版本 | 已接受 | 控制变量，避免迁移风险掩盖业务问题 |
 | ADR-013 | RocketMQ 命令由 Java Consumer 接收，再通过内部 HTTP 调 Python Agent；结果落库成功后确认消息 | 已接受 | 当前 RocketMQ 4.9.7 的 Python 原生客户端存在平台和运行时负担，桥接方案保留异步削峰、至少一次重投和 Java/Python 独立部署边界 |
+| ADR-014 | Agent checkpoint 通过 Java 内部接口持久化到 MySQL `ai_run_step`，不使用 Python 容器本地文件 | 已接受 | 任务事实和运行恢复状态只有一个持久化事实源，容器销毁后仍可恢复 |
+| ADR-015 | Provider 显式路由，默认 `offline-demo`，只有配置密钥后才启用 `openai-web` | 已接受 | CI/面试演示零成本可复现，联网能力可插拔且不会意外产生费用 |
 
 ### 3.1 OpenFeign 与 HTTP Service Client
 
@@ -367,6 +369,8 @@ stateDiagram-v2
 
 ### 6.4 Checkpoint 与恢复
 
+当前已实现应用级 checkpoint：每个节点成功后，Agent 通过带内部 Token 的接口把 `stateVersion=1`、`inputHash` 和有界 `checkpointJson` 幂等写入 `ai_run_step`。checkpoint 不保存 API Key；MQ 重投读取最近节点的 `nextNode`，校验 command hash 和原始 deadline 后继续执行。
+
 每个节点完成后保存可序列化状态，至少包含：
 
 - `taskId`、`runId`、当前节点和状态版本；
@@ -382,7 +386,7 @@ stateDiagram-v2
 - 从最近成功 checkpoint 恢复；
 - 节点通过 `runId + nodeName + inputHash` 幂等；
 - 外部工具调用的不可重复副作用必须进入人工审核；
-- 最多重试可恢复错误，参数错误和权限错误直接失败；
+- 当前执行失败统一由 RocketMQ 重投，默认最多 3 次 run attempt 后进入明确 `FAILED`；后续再细分参数、权限、限流和瞬时网络错误；
 - 最终失败进入死信，并允许用户创建新 run 重试，而不是覆盖旧运行记录。
 
 ### 6.5 模型网关
@@ -397,7 +401,7 @@ embedding
 rerank
 ```
 
-模型路由考虑任务类型、质量、延迟和成本。简单分类、查询改写使用低成本模型，规划、综合写作和 Critic 使用能力更强的模型。模型名、Prompt 版本、输入输出 Token、延迟、重试和费用写入 `model_usage`。
+当前实现两个显式路由：默认 `offline-demo` 与可选 `openai-web`。真实 Provider 受来源数、工具调用数、输出 Token 和超时边界约束，模型名、输入输出 Token、延迟、重试和费用写入 `model_usage`；多模型分层、Prompt 版本和动态成本路由仍是演进项。
 
 ---
 
@@ -429,7 +433,7 @@ WHERE id = ? AND status = ? AND version = ?;
 3. Outbox Relay 投递 AI_TASK_REQUESTED
 4. xplanet-ai Consumer 使用 eventId Inbox 幂等领取，并条件迁移 taskId/runId
 5. Consumer 通过内部 Token + HTTP 调用 Python Agent
-6. Agent 执行状态图；持久化 checkpoint 在 Phase 2 接入
+6. Agent 执行状态图；每节点成功后通过 Java 内部接口幂等保存 checkpoint
 7. Agent 回调 xplanet-ai，把进度写 Redis Stream 并转 SSE
 8. 最终结果通过 HTTP 返回 Consumer，校验引用闭包后事务保存报告、证据和引用
 9. Outbox 记录标记为已投递并按保留策略归档
@@ -628,11 +632,11 @@ HTTP Request
 - 模型 Token、成本、首 Token 和总延迟；
 - 搜索、网页解析和引用验证成功率。
 
-MVP先使用结构化日志、Actuator/Micrometer 和数据库统计；稳定后再接 OpenTelemetry、Prometheus/Grafana 或专门的 LLM Trace 平台。
+MVP已接入结构化日志、Actuator/Micrometer、Prometheus 文本端点和数据库状态：可读取 Agent outcome/duration、节点 checkpoint 次数与耗时。完整 TraceId、Outbox 积压 Gauge、Prometheus/Grafana 部署和专门 LLM Trace 平台仍是后续项。
 
 ### 12.2 Agent 质量评测
 
-建立 30～50 个固定技术问题的黄金数据集，至少覆盖：
+当前先建立10个固定技术问题的离线结构数据集并进入 CI；扩大到30～50个、接入真实 Provider 后，至少覆盖：
 
 - 有明确事实答案的问题；
 - 需要多来源综合的问题；
@@ -646,7 +650,8 @@ MVP先使用结构化日志、Actuator/Micrometer 和数据库统计；稳定后
 | 指标 | 说明 |
 |---|---|
 | Task Success Rate | 是否完整走完任务并产出报告 |
-| Citation Validity | 引用内容是否支持对应结论 |
+| Citation Index Validity | 引用的 evidence ID 是否存在，当前已自动评测 |
+| Claim Support Rate | 引用内容是否在语义/事实上支持对应结论，当前未测量 |
 | Citation Coverage | 关键结论中有证据覆盖的比例 |
 | Source Quality | 官方、论文等高质量来源占比 |
 | Completeness | 是否覆盖计划中的主要子问题 |
@@ -655,6 +660,8 @@ MVP先使用结构化日志、Actuator/Micrometer 和数据库统计；稳定后
 | P95 Duration | 任务总耗时 |
 
 所有简历质量数字必须来自固定数据集、固定版本和可复现脚本。
+
+当前离线基线只统计 `successRate`、`citationIndexValidityRate`、来源绑定、覆盖率和本机耗时；它验证的是图结构和引用 ID 闭包。`claimSupportRate` 固定为 `null`，在加入网页抓取、Claim 拆分和语义验证器前，不宣传“事实正确率”或“引用支持率”。实验条件和结果见 `docs/EXPERIMENTS.md`。
 
 ---
 
@@ -749,20 +756,20 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 - [x] 校验并保存来源、证据和引用；
 - [x] 用户确认后通过 `reportId` 唯一投影幂等发布为文章。
 
-验收结果：浏览器重连后任务事实仍在 MySQL；报告包含可点击来源；同一报告重复确认返回同一文章；取消任务进入明确终态。当前提供器为离线确定性资料，真实模型/搜索、持久化 checkpoint 和失败恢复进入 Phase 2。
+验收结果：浏览器重连后任务事实仍在 MySQL；报告包含可点击来源；同一报告重复确认返回同一文章；取消任务进入明确终态。默认提供器为离线确定性资料，持久化 checkpoint、失败恢复和可选联网 Provider 已在 Phase 2 初步接入。
 
 ### Phase 2：Agent可靠性与质量
 
-- [ ] 持久化 checkpoint 和断点恢复；
-- [ ] 节点级幂等、超时和有界重试；
+- [x] 持久化 checkpoint 和断点恢复；
+- [x] 节点级幂等、原始 deadline 和有界重试；
 - [x] Human-in-the-loop 审核发布（基础版）；
-- [ ] 模型路由和预算控制；
+- [x] `offline-demo` / `openai-web` 显式路由、来源/工具/Token/超时预算和模型用量落库（联网实测待有密钥后执行）；
 - [ ] 引用支持性校验；
-- [ ] 黄金数据集和自动评测；
+- [x] 10条离线黄金数据集和自动结构评测；
 - [ ] Qdrant知识库和内部文章 RAG；
 - [ ] Prompt 注入、SSRF 和工具权限防护。
 
-验收：在搜索失败、模型超时和 Agent 重启故障注入下，任务能恢复或明确失败；评测报告可复现。
+阶段性验收：Agent 在 `PARALLEL_RESEARCH` checkpoint 后强退，可由容器重启与 MQ 重投恢复到 `WAITING_REVIEW`；固定离线评测可复现。真实搜索失败/模型限流分类与在线质量评测待配置有效密钥后补验。
 
 ### Phase 3：后端正确性重构
 
@@ -786,7 +793,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 - [ ] Agent 节点时间线、证据面板、报告编辑器；
 - [ ] Gateway统一入口；
 - [ ] TraceId 全链路；
-- [ ] 任务、模型、工具、MQ、缓存指标面板；
+- [ ] 任务、模型、工具、MQ、缓存指标面板（Agent 与 checkpoint Micrometer 指标已完成，Grafana 面板未做）；
 - [x] Docker Compose 一键启动；
 - [ ] 演示脚本、录屏、架构图和简历材料。
 
@@ -807,20 +814,22 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 ### P0：最先实施
 
-1. `BASE-001`：已建立81个 Java 测试、4个 Python 测试和可重复执行的真实中间件/Agent smoke test；故障注入继续迭代；
+1. `BASE-001`：已建立87个 Java 测试、10个 Python 测试、10条固定离线评测和可重复执行的真实中间件/Agent smoke/recovery test；
 2. `AI-001`：已创建 AI 任务状态机、预算边界、用户级幂等和数据库表；
 3. `AI-002`：已实现 Transactional Outbox 请求/取消命令和带 Inbox 的 Agent 消费桥接；
 4. `AI-003`：已实现六节点 Agent 最小图和有界执行；
 5. `AI-004`：已实现来源、证据、引用关系及引用闭包校验；
 6. `AI-005`：已实现 Redis Stream + SSE；
 7. `AI-006`：已实现报告审核和 `reportId` 唯一投影幂等发布；
-8. `SEC-001`：修复空密码、硬编码密钥和前端 XSS；
-9. `LIKE-001`：先补故障测试并禁止错误宣传，再实施可靠重构；
-10. `DOC-001`：同步 README 中“当前/目标”状态。
+8. `AI-007`：已实现版本化 checkpoint、断点恢复、3次有界重试、模型用量落库和恢复故障测试；
+9. `AI-008`：已实现离线评测、Micrometer 指标和可选 OpenAI Web Search Provider 契约；
+10. `SEC-001`：修复空密码、硬编码密钥和前端 XSS；
+11. `LIKE-001`：先补故障测试并禁止错误宣传，再实施可靠重构；
+12. `DOC-001`：同步 README 中“当前/目标”状态。
 
 ### P1：核心闭环后实施
 
-- Agent checkpoint、恢复、预算和评测；
+- 真实联网质量评测、Claim—Evidence 语义支持验证和错误分类；
 - Qdrant RAG；
 - Gateway统一入口；
 - Feign超时/熔断/TraceId；
@@ -842,11 +851,11 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 ### 17.1 AI主线
 
-1. 不是单轮聊天，而是显式状态图驱动、带预算和人工审核的研究工作流；持久化恢复是下一阶段；
+1. 不是单轮聊天，而是显式状态图驱动、带预算、持久化恢复和人工审核的研究工作流；
 2. 采用“先证据后生成”和结论—证据绑定降低幻觉；
 3. Planner、并行研究、Critic、修订循环均有预算和停止条件；
-4. 当前以任务状态机、Outbox/Inbox 和停止条件保证可控执行；下一阶段补 checkpoint、幂等节点和失败分类恢复；
-5. 固定数据集、引用正确率、成本和恢复成功率属于下一阶段评测目标；
+4. 以任务状态机、Outbox/Inbox、版本化 checkpoint、command hash 和最多3次 attempt 保证可控恢复；
+5. 固定数据集已自动评测结构成功率与引用索引有效性，并主动把语义支持率留空，体现指标边界；
 6. Human-in-the-loop控制发布和其他有副作用工具。
 
 ### 17.2 后端主线
@@ -915,6 +924,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 | 版本 | 日期 | 变更 | 影响 |
 |---|---|---|---|
+| v2.7 | 2026-07-16 | 新增 V007 版本化节点 checkpoint、断点恢复、持久化 deadline、3次有界重试和强退恢复脚本；新增10条离线评测、Agent/节点 Micrometer 指标、模型用量事务落库，以及默认离线/可选 OpenAI Web Search Provider | Phase 2 可靠性基础完成；87项 Java 与10项 Python 测试、10条结构评测、实库迁移、完整 smoke 和 Agent 崩溃恢复用于初步验收；真实联网调用未获密钥/费用授权，语义引用核验、RAG 与完整观测平台仍明确为后续项 |
 | v2.6 | 2026-07-16 | 新增 `xplanet-agent` FastAPI/LangGraph 六节点有界工作流、Java MQ 消费桥、Redis Stream/SSE、结果闭包校验与事务落库、Human-in-the-loop 审核及 `reportId` 幂等文章发布；新增 V006 和完整 AI smoke | Phase 1 初步闭环完成；81项 Java 与4项 Python 测试、实库迁移、7步进度、证据闭包、跨用户隔离、重复发布和取消均通过；真实模型/搜索、checkpoint 和评测明确进入 Phase 2 |
 | v2.5 | 2026-07-16 | 新增 `xplanet-ai` 8084 控制面、V005 十张 AI 任务/运行/证据/报告/成本/Outbox-Inbox 表、私有读写鉴权、用户级载荷幂等、预算上限、版本条件取消和可靠请求/取消命令；Docker 与 smoke 扩展为四服务 | Java 控制面已具备可验证的长任务治理基础；69项单测、实库迁移、跨用户拒绝、两条AI命令发送和三类Outbox零积压已通过；Python Agent仍明确为下一阶段 |
 | v2.4 | 2026-07-16 | 分离 RocketMQ 宿主机/容器 broker 配置；增加 Flyway V4 baseline 与自动迁移脚本、全 Docker 启动健康检查、可配置基础镜像仓库及 CI；实际完成全镜像构建和 smoke test | 新环境不再手工执行历史 SQL；混合与容器网络均获得可达 broker 地址；提交时自动拦截单测、Compose 或 PowerShell 语法回归 |

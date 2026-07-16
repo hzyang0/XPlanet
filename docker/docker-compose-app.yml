@@ -84,6 +84,11 @@ services:
     environment:
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN}
       AI_CONTROL_URL: http://ai:8084
+      AGENT_CRASH_AFTER_NODE: ${AGENT_CRASH_AFTER_NODE:-}
+      AGENT_PROVIDER: ${AGENT_PROVIDER:-offline-demo}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-terra}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
     networks:
       - xp-net
     healthcheck:
@@ -110,6 +115,7 @@ services:
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN}
       AGENT_SERVICE_URL: http://agent:8000
       ARTICLE_SERVICE_URL: http://article:8081
+      AI_AGENT_MAX_ATTEMPTS: ${AI_AGENT_MAX_ATTEMPTS:-3}
     depends_on:
       agent:
         condition: service_healthy

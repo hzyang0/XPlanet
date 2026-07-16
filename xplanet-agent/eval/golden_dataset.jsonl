@@ -1,0 +1,10 @@
+{"id":"outbox-agent","question":"如何用 Transactional Outbox 设计可恢复的 Agent 长任务？","maxSources":3,"maxToolCalls":3,"minSources":3}
+{"id":"like-projection","question":"高并发点赞为什么需要状态事实与异步计数投影分离？","maxSources":3,"maxToolCalls":4,"minSources":3}
+{"id":"cache-consistency","question":"二级缓存的可靠失效应该如何处理数据库与缓存竞态？","maxSources":2,"maxToolCalls":2,"minSources":2}
+{"id":"mq-idempotency","question":"至少一次消息投递下如何设计幂等消费者？","maxSources":4,"maxToolCalls":4,"minSources":4}
+{"id":"agent-progress","question":"长任务进度为什么适合 Redis Stream 与 SSE？","maxSources":3,"maxToolCalls":3,"minSources":3}
+{"id":"agent-bounds","question":"Agent 工作流如何限制工具次数、来源数和截止时间？","maxSources":2,"maxToolCalls":3,"minSources":2}
+{"id":"citation-index","question":"如何确保报告引用只指向已保存的证据？","maxSources":3,"maxToolCalls":3,"minSources":3}
+{"id":"human-review","question":"为什么发布 AI 报告前需要人工审核和幂等键？","maxSources":4,"maxToolCalls":4,"minSources":4}
+{"id":"java-python-boundary","question":"Java 控制面与 Python Agent 执行面应该如何划分？","maxSources":3,"maxToolCalls":3,"minSources":3}
+{"id":"checkpoint-recovery","question":"节点 checkpoint 如何避免失败重试时重复执行已完成步骤？","maxSources":2,"maxToolCalls":2,"minSources":2}

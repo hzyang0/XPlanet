@@ -147,7 +147,8 @@ CREATE TABLE `ai_run` (
 
 CREATE TABLE `ai_run_step` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, `run_id` CHAR(36) NOT NULL,
-    `node_name` VARCHAR(64) NOT NULL, `input_hash` CHAR(64) NOT NULL, `status` VARCHAR(32) NOT NULL,
+    `node_name` VARCHAR(64) NOT NULL, `input_hash` CHAR(64) NOT NULL, `state_version` INT NOT NULL DEFAULT 1,
+    `status` VARCHAR(32) NOT NULL, `checkpoint_json` MEDIUMTEXT NULL,
     `duration_ms` BIGINT NULL, `error_code` VARCHAR(64) NULL, `error_message` VARCHAR(1000) NULL,
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

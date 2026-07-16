@@ -159,10 +159,11 @@ POST /api/ai/tasks
   → Outbox relay 至少一次投递 AI_TASK_REQUESTED
   → xplanet-ai 的 RocketMQ Consumer 以 eventId 写消费 Inbox
   → Consumer 通过带内部 Token 的 HTTP 调用 xplanet-agent
-  → Agent 执行 ValidateInput → Planner → Research → Evidence Builder → Writer → Critic
-  → 每个节点回调 xplanet-ai，进度写入有长度与 TTL 上限的 Redis Stream
-  → Agent 返回来源/证据/引用/报告
-  → xplanet-ai 校验 URL、数量边界和引用闭包后，在同一事务落库并进入 WAITING_REVIEW
+  → Agent 执行 ValidateInput → Planner → Research → Evidence Builder → Writer → Critic → Finalize
+  → 每个节点把 version + inputHash + checkpoint JSON 幂等写入 MySQL
+  → 同时回调 xplanet-ai，把有长度与 TTL 上限的实时进度写入 Redis Stream
+  → Agent 返回来源/证据/引用/报告及模型用量
+  → xplanet-ai 校验 URL、预算和引用闭包后，在同一事务落库并进入 WAITING_REVIEW
   → 浏览器通过 SSE 查看进度，任务所有者审核报告
   → 审核通过后 OpenFeign 调 article，以 reportId 唯一投影幂等创建文章
 ```
@@ -173,11 +174,21 @@ POST /api/ai/tasks
 
 - `ai_task` 是任务状态事实源，Redis Stream 只保存可过期的实时进度；
 - 消费 Inbox 和 `event_id` 唯一约束吸收 Outbox relay 的重复投递；
+- `ai_run_step` 以 `run_id + node_name` 幂等保存版本化 checkpoint；Agent 在 checkpoint 提交后退出，MQ 重投会从 `nextNode` 恢复而不是重复已完成节点；
+- 每次进入 `RETRYING` 才增加 run attempt，默认第 3 次失败进入 `FAILED`，下一次投递只做 Inbox 确认，避免毒消息无限循环；
 - 结果落库前检查 `sourceRef`、`evidenceRef` 和 citation 引用闭包，孤立引用不会进入数据库；
+- 模型输出 Token 总量不得超过任务预算，Provider/模型/Token/延迟/重试随结果事务写入 `model_usage`；
 - 报告发布先持久化 `APPROVED`，文章服务暂时失败时可由用户重试；
 - `ai_published_article.report_id` 唯一，重复审核或网络重试返回同一 `article_id`；
-- 当前 Agent 是离线确定性提供器，只证明工作流与可靠性，不证明实时搜索或模型答案质量；
-- 持久化 checkpoint、节点恢复和真实模型/搜索属于下一阶段。
+- 默认 Agent 是离线确定性提供器，只证明工作流结构与可靠性，不证明实时搜索或模型答案质量；
+- 可选 `openai-web` 使用 Responses API Web Search，当前通过 MockTransport 验证请求、引用解析和边界，未用真实密钥做联网质量验收；URL 引用索引有效不等于内容在语义上支持结论。
+
+### 5.3 评测与可观测性
+
+- `xplanet-agent/eval/golden_dataset.jsonl` 固定 10 个离线结构案例，CI 运行成功率、引用索引有效率、来源绑定和预算边界评测；`claimSupportRate` 明确留空；
+- `xplanet-ai` 通过 Actuator/Prometheus 暴露 Agent 执行结果与耗时、节点 checkpoint 次数与耗时；
+- `scripts/test-agent-recovery.ps1` 在 `PARALLEL_RESEARCH` checkpoint 成功后强制退出 Agent，验证容器重启、RocketMQ 重投、attempt 增长和 7 节点完整恢复；
+- 本阶段指标是本地功能验收证据，不是生产容量或线上质量结论。
 
 ## 6. 已知取舍(面试可主动说出来加分)
 
@@ -186,7 +197,7 @@ POST /api/ai/tasks
 - 单机 Redis,没起集群/哨兵
 - article 通过 OpenFeign 调 user 服务；熔断和 TraceId 透传仍待完善
 - 没接配置中心 / 注册中心,服务地址写在配置里
-- AI 已完成离线 Agent 初步闭环，但真实检索/模型调用、持久化 checkpoint、故障恢复和评测尚未实现
+- AI 已完成离线 Agent、checkpoint、故障恢复、基础评测和 Micrometer 指标；真实联网质量、语义引用核验、Prompt 注入/SSRF 防护和 RAG 尚未完成
 
 **关于刻意不做的部分**:网关、注册中心、分布式事务、监控全家桶在这个业务规模下属于过度设计,没有引入。
 缓存一致性也没上 Canal binlog 兜底——社区场景下「双删 + MQ 广播」已足够,binlog 兜底是为不存在的问题加复杂度。
@@ -196,6 +207,6 @@ POST /api/ai/tasks
 
 - 本地混合模式通过 `scripts/setup-infra.ps1` 启动中间件，RocketMQ broker 广播宿主机地址，Java 服务在 IDE 或本机 JVM 中运行；
 - 全 Docker 模式通过 `scripts/start-docker.ps1` 切换 broker 容器地址、执行 Flyway、构建四个 Java 应用和一个 Python Agent 镜像并等待健康；
-- `sql/init.sql` 负责新数据卷的当前完整结构，Flyway 对历史数据库建立 V4 baseline，V005 增加 AI 控制面，V006 增加 AI 报告—文章幂等发布投影；以后继续追加版本脚本；
+- `sql/init.sql` 负责新数据卷的当前完整结构，Flyway 对历史数据库建立 V4 baseline，V005 增加 AI 控制面，V006 增加 AI 报告—文章幂等发布投影，V007 增加运行步骤 checkpoint；以后继续追加版本脚本；
 - 两种模式共用固定 `xplanet-net` 网络，但分别使用 `broker-host.conf` 和 `broker-docker.conf`，避免 broker 把客户端无法访问的地址注册到 NameServer；
-- CI 执行 81 项 Java 测试、4 项 Python Agent 测试、两份 Compose 配置解析和全部 PowerShell 脚本语法检查；真实 MySQL/Redis/RocketMQ/Agent 行为由 `scripts/smoke-test.ps1` 验证。
+- CI 执行 87 项 Java 测试、10 项 Python Agent 测试、10 条离线评测、两份 Compose 配置解析和全部 PowerShell 脚本语法检查；真实 MySQL/Redis/RocketMQ/Agent 行为由 `scripts/smoke-test.ps1` 与 `scripts/test-agent-recovery.ps1` 验证。

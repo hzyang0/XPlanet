@@ -14,6 +14,16 @@ class ProgressSink(Protocol):
 
     def is_cancelled(self) -> bool: ...
 
+    def load_checkpoint(self) -> str | None: ...
+
+    def save_checkpoint(
+        self,
+        node: str,
+        input_hash: str,
+        state_json: str,
+        duration_ms: int,
+    ) -> None: ...
+
 
 @dataclass
 class NullProgressSink:
@@ -22,6 +32,18 @@ class NullProgressSink:
 
     def is_cancelled(self) -> bool:
         return False
+
+    def load_checkpoint(self) -> str | None:
+        return None
+
+    def save_checkpoint(
+        self,
+        node: str,
+        input_hash: str,
+        state_json: str,
+        duration_ms: int,
+    ) -> None:
+        return None
 
 
 class HttpProgressSink:
@@ -61,3 +83,38 @@ class HttpProgressSink:
         except Exception as exc:
             logger.warning("cancellation check failed: %s", exc)
             return False
+
+    def load_checkpoint(self) -> str | None:
+        with httpx.Client(timeout=3.0) as client:
+            response = client.get(
+                f"{self._base_url}/internal/ai/tasks/{self._task_id}/checkpoint",
+                headers=self._headers,
+                params={"runId": self._run_id},
+            )
+            response.raise_for_status()
+            if not response.content:
+                return None
+            payload = response.json()
+            return payload.get("stateJson") if payload else None
+
+    def save_checkpoint(
+        self,
+        node: str,
+        input_hash: str,
+        state_json: str,
+        duration_ms: int,
+    ) -> None:
+        payload = {
+            "runId": self._run_id,
+            "node": node,
+            "inputHash": input_hash,
+            "stateVersion": 1,
+            "stateJson": state_json,
+            "durationMs": max(0, duration_ms),
+        }
+        with httpx.Client(timeout=5.0) as client:
+            client.post(
+                f"{self._base_url}/internal/ai/tasks/{self._task_id}/checkpoint",
+                headers=self._headers,
+                json=payload,
+            ).raise_for_status()

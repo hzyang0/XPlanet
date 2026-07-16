@@ -39,6 +39,8 @@ ai:
   progress:
     max-length: ${AI_PROGRESS_MAX_LENGTH:1000}
     ttl-hours: ${AI_PROGRESS_TTL_HOURS:24}
+  agent:
+    max-attempts: ${AI_AGENT_MAX_ATTEMPTS:3}
 
 agent-service:
   base-url: ${AGENT_SERVICE_URL:http://localhost:8000}
@@ -60,4 +62,4 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus

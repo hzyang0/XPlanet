@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.net.URI;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
@@ -68,6 +69,11 @@ public class AiResultPersistenceService {
             if (evidenceId == null || resultMapper.insertCitation(report.getId(), citation.getClaimId(),
                     evidenceId, citation.getSupportScore()) != 1) {
                 throw new IllegalStateException("citation references unknown evidence");
+            }
+        }
+        for (AiResearchResult.Usage usage : result.getUsage()) {
+            if (resultMapper.insertUsage(result.getRunId(), usage) != 1) {
+                throw new IllegalStateException("failed to persist model usage");
             }
         }
         if (resultMapper.markTaskWaitingReview(task.getId(), result.getRunId()) != 1
@@ -140,8 +146,11 @@ public class AiResultPersistenceService {
                 || result.getQualityScore() == null || result.getQualityScore() < 0
                 || result.getQualityScore() > 1 || result.getSources() == null
                 || result.getEvidence() == null || result.getCitations() == null
+                || result.getUsage() == null || result.getProvider() == null
+                || result.getProvider().isBlank() || result.getProvider().length() > 64
                 || result.getSources().isEmpty() || result.getSources().size() > task.getMaxSources()
-                || result.getEvidence().size() > task.getMaxToolCalls() * 5) {
+                || result.getEvidence().size() > task.getMaxToolCalls() * 5
+                || result.getUsage().size() > task.getMaxToolCalls()) {
             throw new IllegalArgumentException("AI result exceeds task bounds");
         }
         Set<String> sourceRefs = new HashSet<>();
@@ -173,6 +182,28 @@ public class AiResultPersistenceService {
                     || citation.getSupportScore() == null || citation.getSupportScore() < 0
                     || citation.getSupportScore() > 1) {
                 throw new IllegalArgumentException("invalid citation binding");
+            }
+        }
+        long totalOutputTokens = 0;
+        for (AiResearchResult.Usage usage : result.getUsage()) {
+            if (usage.getNodeName() == null || usage.getNodeName().isBlank()
+                    || usage.getNodeName().length() > 64
+                    || usage.getProvider() == null || usage.getProvider().isBlank()
+                    || usage.getProvider().length() > 64
+                    || usage.getModel() == null || usage.getModel().isBlank()
+                    || usage.getModel().length() > 128
+                    || usage.getInputTokens() == null || usage.getInputTokens() < 0
+                    || usage.getOutputTokens() == null || usage.getOutputTokens() < 0
+                    || usage.getEstimatedCost() == null
+                    || usage.getEstimatedCost().compareTo(BigDecimal.ZERO) < 0
+                    || usage.getLatencyMs() == null || usage.getLatencyMs() < 0
+                    || usage.getRetryCount() == null || usage.getRetryCount() < 0
+                    || usage.getRetryCount() > task.getMaxToolCalls()) {
+                throw new IllegalArgumentException("invalid model usage");
+            }
+            totalOutputTokens += usage.getOutputTokens();
+            if (totalOutputTokens > task.getMaxTokens()) {
+                throw new IllegalArgumentException("model usage exceeds output token budget");
             }
         }
     }

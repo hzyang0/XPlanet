@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.OffsetDateTime;
+import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -58,12 +59,14 @@ class AiResultPersistenceServiceTest {
             return 1;
         }).when(resultMapper).insertReport(any(AiReportRecord.class));
         when(resultMapper.insertCitation(30L, "claim-1", 20L, 0.9)).thenReturn(1);
+        when(resultMapper.insertUsage(eq("run-1"), any(AiResearchResult.Usage.class))).thenReturn(1);
         when(resultMapper.markTaskWaitingReview(1L, "run-1")).thenReturn(1);
         when(resultMapper.markRunWaitingReview(1L, "run-1")).thenReturn(1);
 
         service.complete("event-1", result());
 
         verify(resultMapper).insertCitation(30L, "claim-1", 20L, 0.9);
+        verify(resultMapper).insertUsage(eq("run-1"), any(AiResearchResult.Usage.class));
         verify(resultMapper).markTaskWaitingReview(1L, "run-1");
         verify(resultMapper).markRunWaitingReview(1L, "run-1");
     }
@@ -103,6 +106,20 @@ class AiResultPersistenceServiceTest {
         verify(resultMapper, never()).insertSource(any());
     }
 
+    @Test
+    void shouldRejectModelUsageBeyondTaskOutputTokenBudget() {
+        AiResearchResult invalid = result();
+        invalid.getUsage().get(0).setOutputTokens(8_001);
+        when(resultMapper.insertInbox(AiResultPersistenceService.CONSUMER, "event-1")).thenReturn(1);
+        when(taskMapper.findInternalForUpdate(1L)).thenReturn(task("RUNNING"));
+
+        assertThatThrownBy(() -> service.complete("event-1", invalid))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("model usage exceeds output token budget");
+
+        verify(resultMapper, never()).insertSource(any());
+    }
+
     private AiTaskRecord task(String status) {
         AiTaskRecord task = new AiTaskRecord();
         task.setId(1L);
@@ -110,6 +127,7 @@ class AiResultPersistenceServiceTest {
         task.setStatus(status);
         task.setMaxSources(5);
         task.setMaxToolCalls(10);
+        task.setMaxTokens(8_000);
         return task;
     }
 
@@ -120,10 +138,14 @@ class AiResultPersistenceServiceTest {
         AiResearchResult.Evidence evidence = new AiResearchResult.Evidence(
                 "ev-1", "src-1", "section 1", "supporting evidence", 0.9);
         AiResearchResult.Citation citation = new AiResearchResult.Citation("claim-1", "ev-1", 0.9);
+        AiResearchResult.Usage usage = new AiResearchResult.Usage(
+                "PARALLEL_RESEARCH", "openai", "test-model", 120, 80,
+                BigDecimal.ZERO, 25L, 0);
         return AiResearchResult.builder()
                 .taskId(1L).runId("run-1").title("Report").content("Content")
                 .qualityScore(0.9).provider("offline-demo")
                 .sources(List.of(source)).evidence(List.of(evidence)).citations(List.of(citation))
+                .usage(List.of(usage))
                 .build();
     }
 }

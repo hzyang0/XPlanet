@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  验证 XPlanet 四个 Java 服务、点赞最终一致性和 AI 控制面可靠命令链路。
+  验证 XPlanet 四个 Java 服务、Python Agent、点赞最终一致性和 AI 可靠研究闭环。
 
 .DESCRIPTION
   运行前需启动 MySQL、Redis、RocketMQ 以及 8081/8082/8083/8084 四个应用服务。
@@ -64,12 +64,24 @@ function ConvertFrom-Utf8Base64([string]$Value) {
 
 Write-Host ">>> 检查服务健康状态" -ForegroundColor Cyan
 $health = 8081, 8082, 8083, 8084 | ForEach-Object {
+    $port = $_
+    Wait-Until {
+        try {
+            (Invoke-RestMethod -Uri "http://localhost:$port/actuator/health" -TimeoutSec 3).status -eq "UP"
+        }
+        catch {
+            $false
+        }
+    } "服务端口 $port 健康"
     $response = Invoke-RestMethod -Uri "http://localhost:$_/actuator/health" -TimeoutSec 5
     if ($response.status -ne "UP") {
         throw "服务端口 $_ 健康状态不是 UP"
     }
     "${_}:UP"
 }
+Wait-Until {
+    (docker inspect -f "{{.State.Health.Status}}" xp-agent 2>$null) -eq "healthy"
+} "Agent 容器健康"
 $agentHealth = docker inspect -f "{{.State.Health.Status}}" xp-agent 2>$null
 if ($agentHealth -ne "healthy") {
     throw "Agent 容器健康状态不是 healthy：$agentHealth"
@@ -151,6 +163,21 @@ foreach ($citation in $aiReport.data.citations) {
 $progressEventCount = [long](docker exec xp-redis redis-cli XLEN "xp:ai:task:$($aiCreated.data.id):events")
 if ($progressEventCount -lt 7) {
     throw "Agent 进度事件不完整，实际为 $progressEventCount"
+}
+$checkpointCount = [long](Invoke-SqlScalar `
+    "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND s.status='COMPLETED' AND s.checkpoint_json IS NOT NULL AND JSON_VALID(s.checkpoint_json)=1;")
+if ($checkpointCount -ne 7) {
+    throw "Agent checkpoint 不完整或状态 JSON 非法，实际为 $checkpointCount"
+}
+$latestCheckpointNode = Invoke-SqlScalar `
+    "SELECT s.node_name FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) ORDER BY s.id DESC LIMIT 1;"
+if ($latestCheckpointNode -ne "FINALIZE") {
+    throw "Agent 最新 checkpoint 应为 FINALIZE，实际为 $latestCheckpointNode"
+}
+$aiMetrics = (Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:8084/actuator/prometheus" -TimeoutSec 10).Content
+if ($aiMetrics -notmatch "xplanet_ai_agent_executions_total" `
+        -or $aiMetrics -notmatch "xplanet_ai_agent_checkpoints_total") {
+    throw "AI Prometheus 指标缺少任务执行或 checkpoint 计数"
 }
 $otherReport = Invoke-RestMethod -Uri "http://localhost:8084/api/ai/tasks/$($aiCreated.data.id)/report" `
     -Headers $otherHeaders -TimeoutSec 10
@@ -347,6 +374,9 @@ if ($unauthenticated.code -ne 2001) {
     AiCrossUserReadCode = $otherRead.code
     AiCrossUserReportCode = $otherReport.code
     AiProgressEvents = $progressEventCount
+    AiCheckpointCount = $checkpointCount
+    AiLatestCheckpoint = $latestCheckpointNode
+    AiMetricsExposed = $true
     AiEvidenceCount = $aiReport.data.evidence.Count
     AiPublishedArticleId = $approved.data.publishArticleId
     AiPublishIdempotent = ($approved.data.publishArticleId -eq $approvedAgain.data.publishArticleId)

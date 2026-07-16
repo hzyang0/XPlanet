@@ -51,7 +51,8 @@ public interface AiTaskMapper {
             "WHERE id=#{taskId} AND current_run_id=#{runId} AND status IN ('QUEUED','RETRYING')")
     int markRunning(@Param("taskId") Long taskId, @Param("runId") String runId);
 
-    @Update("UPDATE ai_run SET status='RUNNING', current_node='VALIDATE_INPUT', " +
+    @Update("UPDATE ai_run SET attempt=attempt+IF(status='RETRYING',1,0), " +
+            "status='RUNNING', current_node='VALIDATE_INPUT', " +
             "started_time=COALESCE(started_time,NOW()), update_time=NOW() " +
             "WHERE run_id=#{runId} AND task_id=#{taskId} AND status IN ('QUEUED','RETRYING','RUNNING')")
     int markRunRunning(@Param("taskId") Long taskId, @Param("runId") String runId);
@@ -67,4 +68,20 @@ public interface AiTaskMapper {
     int markRunRetrying(@Param("taskId") Long taskId,
                         @Param("runId") String runId,
                         @Param("error") String error);
+
+    @Select("SELECT attempt FROM ai_run WHERE run_id=#{runId} AND task_id=#{taskId}")
+    Integer findRunAttempt(@Param("taskId") Long taskId, @Param("runId") String runId);
+
+    @Update("UPDATE ai_task SET status='FAILED', version=version+1, last_error=#{error}, update_time=NOW() " +
+            "WHERE id=#{taskId} AND current_run_id=#{runId} AND status IN ('RUNNING','RETRYING')")
+    int markFailed(@Param("taskId") Long taskId,
+                   @Param("runId") String runId,
+                   @Param("error") String error);
+
+    @Update("UPDATE ai_run SET status='FAILED', current_node='FAILED', last_error=#{error}, " +
+            "finished_time=NOW(), update_time=NOW() " +
+            "WHERE run_id=#{runId} AND task_id=#{taskId} AND status IN ('RUNNING','RETRYING')")
+    int markRunFailed(@Param("taskId") Long taskId,
+                      @Param("runId") String runId,
+                      @Param("error") String error);
 }

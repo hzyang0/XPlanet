@@ -43,6 +43,14 @@ public interface AiResultMapper {
                        @Param("evidenceId") Long evidenceId,
                        @Param("supportScore") Double supportScore);
 
+    @Insert("INSERT INTO model_usage " +
+            "(run_id, node_name, provider, model, input_tokens, output_tokens, estimated_cost, " +
+            "latency_ms, retry_count, create_time) VALUES " +
+            "(#{runId}, #{usage.nodeName}, #{usage.provider}, #{usage.model}, #{usage.inputTokens}, " +
+            "#{usage.outputTokens}, #{usage.estimatedCost}, #{usage.latencyMs}, #{usage.retryCount}, NOW())")
+    int insertUsage(@Param("runId") String runId,
+                    @Param("usage") com.xplanet.api.dto.AiResearchResult.Usage usage);
+
     @Select("SELECT * FROM ai_report WHERE task_id=#{taskId} AND run_id=#{runId} LIMIT 1")
     AiReportRecord findByRun(@Param("taskId") Long taskId, @Param("runId") String runId);
 

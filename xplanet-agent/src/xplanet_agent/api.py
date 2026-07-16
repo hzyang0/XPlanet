@@ -7,10 +7,34 @@ from fastapi import FastAPI, Header, HTTPException
 
 from .models import ResearchResult, TaskCommand
 from .progress import HttpProgressSink
+from .providers import OpenAIWebResearchProvider
 from .workflow import ResearchWorkflow, TaskCancelled
 
 app = FastAPI(title="XPlanet Agent", version="0.1.0")
-workflow = ResearchWorkflow()
+
+
+def _optional_crash_after_checkpoint(node: str) -> None:
+    """Explicit chaos-test hook; disabled unless the container env names a node."""
+    if os.getenv("AGENT_CRASH_AFTER_NODE", "").upper() == node.upper():
+        os._exit(17)
+
+
+def _build_workflow() -> ResearchWorkflow:
+    provider_name = os.getenv("AGENT_PROVIDER", "offline-demo").strip().lower()
+    if provider_name == "offline-demo":
+        provider = None
+    elif provider_name == "openai-web":
+        provider = OpenAIWebResearchProvider(
+            api_key=os.getenv("OPENAI_API_KEY", ""),
+            model=os.getenv("OPENAI_MODEL", "gpt-5.6-terra"),
+            base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        )
+    else:
+        raise ValueError(f"unsupported AGENT_PROVIDER: {provider_name}")
+    return ResearchWorkflow(provider=provider, after_checkpoint=_optional_crash_after_checkpoint)
+
+
+workflow = _build_workflow()
 
 
 def _require_internal_token(presented: str | None) -> str:
@@ -22,7 +46,7 @@ def _require_internal_token(presented: str | None) -> str:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "UP", "provider": "offline-demo"}
+    return {"status": "UP", "provider": workflow.provider_name}
 
 
 @app.post("/internal/tasks/execute", response_model=ResearchResult)

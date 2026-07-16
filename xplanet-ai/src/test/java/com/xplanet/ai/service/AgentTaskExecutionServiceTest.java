@@ -3,6 +3,7 @@ package com.xplanet.ai.service;
 import com.xplanet.ai.client.AgentServiceClient;
 import com.xplanet.api.dto.AiResearchResult;
 import com.xplanet.api.dto.AiTaskCommand;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -18,14 +19,16 @@ class AgentTaskExecutionServiceTest {
     private AiTaskStateService stateService;
     private AiResultPersistenceService resultService;
     private AgentTaskExecutionService service;
+    private SimpleMeterRegistry meterRegistry;
 
     @BeforeEach
     void setUp() {
         client = mock(AgentServiceClient.class);
         stateService = mock(AiTaskStateService.class);
         resultService = mock(AiResultPersistenceService.class);
+        meterRegistry = new SimpleMeterRegistry();
         service = new AgentTaskExecutionService(client, new InternalTokenVerifier("x".repeat(32)),
-                stateService, resultService);
+                stateService, resultService, meterRegistry);
     }
 
     @Test
@@ -39,6 +42,8 @@ class AgentTaskExecutionServiceTest {
 
         verify(resultService).complete("event-1", result);
         verify(stateService, never()).retry(1L, "run-1", null);
+        org.assertj.core.api.Assertions.assertThat(meterRegistry.counter(
+                "xplanet.ai.agent.executions", "outcome", "success").count()).isEqualTo(1);
     }
 
     @Test
