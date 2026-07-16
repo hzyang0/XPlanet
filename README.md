@@ -63,7 +63,9 @@
 | `xplanet-interaction` | 8082 | 点赞服务 | **文章有效性校验、关系状态机、Transactional Outbox、可恢复 MQ relay** |
 | `xplanet-user` | 8083 | 用户服务 | 用户查询、bcrypt 登录与 JWT 签发 |
 
-## 快速开始(本地混合模式)
+## 快速开始
+
+### 方式一：本地混合模式（开发推荐）
 
 推荐:中间件用 Docker,3 个服务用 IDE / 命令行跑(便于断点调试)。
 
@@ -75,28 +77,23 @@ $env:TOKEN_SECRET="replace-with-a-random-secret-at-least-32-bytes"
 
 Docker Compose 用户可复制 `.env.example` 为 `.env` 后替换其中的示例值。
 
-### 1. 启动中间件
+#### 1. 启动中间件并迁移数据库
 
-```bash
-docker compose -f docker/docker-compose-infra.yml up -d
-# 等待 MySQL healthy(约 20-30s)
-docker compose -f docker/docker-compose-infra.yml ps
+```powershell
+.\scripts\setup-infra.ps1
 ```
 
-启动 MySQL(3306,自动建表+测试数据)、Redis(6379)、RocketMQ(namesrv 9876 + broker 10911)。
-如果复用旧 MySQL 数据卷，请在启动新版 user 服务前执行一次
-[`sql/migrations/V002__add_user_password_hash.sql`](sql/migrations/V002__add_user_password_hash.sql)；新数据卷会由 `init.sql` 直接创建字段。
-从旧点赞链路升级时还需停服执行
-[`sql/migrations/V003__reliable_like_outbox_projection.sql`](sql/migrations/V003__reliable_like_outbox_projection.sql)，
-核对迁移结果后再启动新版 interaction/article 服务。
+脚本会启动 MySQL(3306)、Redis(6379)、RocketMQ(namesrv 9876 + broker 10911)，
+选择供宿主机 JVM 使用的 broker 广播地址，等待 MySQL 就绪并执行 Flyway。
+当前完整表结构以 V004 为 baseline，后续新增 V005 及以上迁移会自动按顺序执行，无需手工修改数据库。
 
-### 2. 编译
+#### 2. 编译
 
 ```bash
 mvn -DskipTests clean install
 ```
 
-### 3. 启动 3 个服务
+#### 3. 启动 3 个服务
 
 IDEA 直接 Run:`ArticleApplication`(8081)、`InteractionApplication`(8082)、`UserApplication`(8083)。
 
@@ -107,7 +104,7 @@ mvn -pl xplanet-interaction -am spring-boot:run
 mvn -pl xplanet-user        -am spring-boot:run
 ```
 
-### 4. 验证
+#### 4. 验证
 
 ```bash
 # 文章详情(走二级缓存,读操作免登录)
@@ -141,6 +138,19 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 脚本会验证健康检查、登录、文章查询、可靠缓存失效 Outbox、重复点赞幂等、MQ 消费、持久化计数投影和未登录拦截，
 并在结束时恢复原点赞状态和文章计数。RocketMQ 冷启动首次建立消费者订阅可能需要几十秒，脚本默认等待上限为 90 秒。
 
+### 方式二：全 Docker 模式（演示推荐）
+
+先设置密钥，然后一条命令完成基础设施启动、数据库迁移、应用镜像构建和健康检查：
+
+```powershell
+$env:TOKEN_SECRET="replace-with-a-random-secret-at-least-32-bytes"
+.\scripts\start-docker.ps1
+.\scripts\smoke-test.ps1
+```
+
+若所在网络无法访问 Docker Hub，可临时通过参数或 `DOCKER_BASE_REGISTRY` 指定兼容镜像前缀；
+仓库默认值仍为官方 `docker.io/library`，避免把特定镜像站写死到项目中。
+
 ## 性能测试
 
 见 [`benchmark/README.md`](benchmark/README.md) 与 [`docs/benchmark-results.md`](docs/benchmark-results.md)。
@@ -161,9 +171,13 @@ xplanet/
 │   ├── docker-compose-infra.yml   # 中间件(本地混合模式用这个)
 │   ├── docker-compose-app.yml     # 全 Docker 模式(可选)
 │   ├── Dockerfile.app
-│   └── broker.conf                # RocketMQ broker IP 配置
-├── sql/init.sql
-├── scripts/                 # 构建、启动基础设施/应用、端到端冒烟测试
+│   ├── broker-host.conf           # 宿主机 JVM 使用的 broker 广播地址
+│   └── broker-docker.conf         # 容器应用使用的 broker 广播地址
+├── sql/
+│   ├── init.sql                   # 新数据卷完整结构
+│   └── migrations/                # Flyway 增量迁移
+├── scripts/                 # 构建、迁移、两种模式启动、端到端冒烟测试
+├── .github/workflows/ci.yml # 单测、Compose 与脚本语法检查
 ├── benchmark/               # wrk 压测脚本
 └── docs/
     ├── ARCHITECTURE.md

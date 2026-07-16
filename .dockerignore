@@ -1,0 +1,14 @@
+.git
+.github
+.idea
+.vscode
+.agents
+**/target
+logs
+docker/data
+benchmark
+docs
+xplanet-web
+*.log
+.env
+.env.*

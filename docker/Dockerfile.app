@@ -1,5 +1,7 @@
 # 通用 Dockerfile: 通过 ARG MODULE 指定子模块,所有服务复用同一份。
-FROM maven:3.9-eclipse-temurin-17 AS build
+# Docker Hub 不可达时可传 BASE_REGISTRY=m.daocloud.io/docker.io/library。
+ARG BASE_REGISTRY=docker.io/library
+FROM ${BASE_REGISTRY}/maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /workspace
 COPY pom.xml ./
 COPY xplanet-common/pom.xml xplanet-common/pom.xml
@@ -13,7 +15,7 @@ COPY . .
 ARG MODULE
 RUN mvn -B -ntp -pl ${MODULE} -am clean package -DskipTests
 
-FROM eclipse-temurin:17-jre
+FROM ${BASE_REGISTRY}/eclipse-temurin:17-jre
 ARG MODULE
 WORKDIR /app
 COPY --from=build /workspace/${MODULE}/target/${MODULE}-*.jar /app/app.jar
