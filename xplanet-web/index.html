@@ -111,6 +111,7 @@
     <input id="userBase" type="hidden" value="http://localhost:8083" />
     <label>登录</label>
     <input id="loginUser" class="small" value="alice" style="width:70px" placeholder="用户名"/>
+    <input id="loginPassword" type="password" value="password" style="width:90px" placeholder="密码"/>
     <button class="like-btn" style="padding:3px 10px;font-size:12px" onclick="doLogin()">登录</button>
     <span id="loginState" style="font-family:var(--mono);font-size:11px;color:var(--ink-soft)">未登录</span>
   </div>
@@ -198,11 +199,12 @@ const uid = () => $("uid") ? $("uid").value : "1";
 let TOKEN = null;
 async function doLogin(){
   const username = $("loginUser").value.trim();
-  if (!username){ toast("请输入用户名"); return; }
+  const password = $("loginPassword").value;
+  if (!username || !password){ toast("请输入用户名和密码"); return; }
   try {
     const res = await fetch(`${userBase()}/api/user/login`, {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ username })
+      body: JSON.stringify({ username, password })
     });
     const j = await res.json();
     if (j.code === 0 && j.data && j.data.token){

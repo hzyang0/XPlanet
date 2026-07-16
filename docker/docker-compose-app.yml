@@ -23,6 +23,8 @@ services:
       REDIS_HOST: redis
       ROCKETMQ_NS: rocketmq-namesrv:9876
       USER_SERVICE_URL: http://user:8083
+      TOKEN_SECRET: ${TOKEN_SECRET}
+      TOKEN_EXPIRE_SECONDS: ${TOKEN_EXPIRE_SECONDS:-86400}
     ports:
       - "8081:8081"
     networks:
@@ -39,6 +41,8 @@ services:
     environment:
       REDIS_HOST: redis
       ROCKETMQ_NS: rocketmq-namesrv:9876
+      TOKEN_SECRET: ${TOKEN_SECRET}
+      TOKEN_EXPIRE_SECONDS: ${TOKEN_EXPIRE_SECONDS:-86400}
     ports:
       - "8082:8082"
     networks:
@@ -54,6 +58,9 @@ services:
     restart: unless-stopped
     environment:
       MYSQL_HOST: mysql
+      REDIS_HOST: redis
+      TOKEN_SECRET: ${TOKEN_SECRET}
+      TOKEN_EXPIRE_SECONDS: ${TOKEN_EXPIRE_SECONDS:-86400}
     ports:
       - "8083:8083"
     networks:

@@ -1,6 +1,6 @@
 # XPlanet Research 整体优化改进方案
 
-> 文档状态：架构基线 v1.1（实施中）
+> 文档状态：架构基线 v1.2（实施中）
 > 基线日期：2026-07-16  
 > 适用范围：当前 XPlanet Java 项目及计划新增的 AI Agent 能力  
 > 当前阶段：只确定方案和实施顺序，不代表目标能力已经完成
@@ -115,7 +115,7 @@
 | CUR-P0-02 | 生产端 orderly，消费者却是 `CONCURRENTLY` | 当前设计不能保证同用户顺序 | 重构为源端状态机后让计数事件可交换；旧方案修复前不能宣称顺序保证 |
 | CUR-P0-03 | 消费端先更新 `article_like`，再写 Redis 缓冲；后一步失败后重试会因状态相同直接返回 | 点赞总数可能永久少算 | 使用持久化事件投影和 Inbox 去重 |
 | CUR-P0-04 | Redis `RENAME` 后实例崩溃，没有扫描和恢复临时 flushing key | 聚合增量可能滞留 | 使用持久化投影表或实现可恢复批次协议 |
-| CUR-P0-05 | 登录不校验密码，Token 密钥硬编码 | 仅能作为 Demo，不能当生产鉴权 | Spring Security + 密码哈希 + 外部密钥 |
+| CUR-P0-05 | 登录不校验密码，Token 密钥硬编码 | 仅能作为 Demo，不能当生产鉴权 | 已完成 PasswordEncoder/bcrypt、标准 JWT/JWS 和外部密钥；刷新/撤销机制按需后续实现 |
 | CUR-P0-06 | 前端把服务端标题、摘要、评论等插入 `innerHTML` | 存储型 XSS 风险 | 转义/文本节点/前端框架默认转义 |
 | CUR-P0-07 | 全 Docker 模式下 RocketMQ broker 注册地址和 article→user 默认地址不正确 | 容器应用无法稳定互通 | 分离 host/container 配置并增加启动检查 |
 
@@ -763,7 +763,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 - [ ] 点赞改为数据库状态机 + Outbox + 持久化计数投影；
 - [ ] 缓存失效改为可靠事件和可重试延迟删除；
 - [ ] 修正 Redisson 锁语义；
-- [ ] 用户密码和 Token 安全改造；
+- [x] 用户密码哈希校验、标准 JWT/JWS 和外部化 Token 密钥；
 - [x] 类型化 OpenFeign、连接/读取超时和 Docker 服务地址；
 - [ ] 远程调用熔断、错误解码和 TraceId 透传；
 - [ ] 评论约束与分页；
@@ -907,6 +907,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 | 版本 | 日期 | 变更 | 影响 |
 |---|---|---|---|
+| v1.2 | 2026-07-16 | 完成 CUR-P0-05：bcrypt密码校验、标准JWT/JWS、外部密钥、旧库迁移和鉴权测试 | 登录不再接受空密码，数据库和代码不保存明文密码/固定签名密钥 |
 | v1.1 | 2026-07-16 | 完成 CUR-P1-01 第一阶段：类型化用户服务契约、OpenFeign 超时、Docker 地址和4个单元测试 | article→user 不再使用裸 RestTemplate，降级值不写缓存 |
 | v1.0 | 2026-07-16 | 建立 XPlanet Research 总体方案；确定 Java + Python、Agent 工作流、MQ/SSE、Outbox/Inbox、点赞投影和分阶段计划 | 作为后续实施和文档同步基线 |
 
@@ -920,3 +921,5 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 - Spring Cloud OpenFeign：<https://docs.spring.io/spring-cloud-openfeign/reference/index.html>
 - Spring HTTP Clients：<https://docs.spring.io/spring-framework/reference/integration/rest-clients.html>
 - Apache Dubbo Protocol Overview：<https://dubbo.apache.org/en/overview/mannual/java-sdk/reference-manual/protocol/overview/>
+- JJWT：<https://github.com/jwtk/jjwt>
+- Spring Security Password Storage：<https://docs.spring.io/spring-security/reference/features/authentication/password-storage.html>

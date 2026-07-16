@@ -1,6 +1,12 @@
 server:
   port: 8083
 
+security:
+  token:
+    secret: ${TOKEN_SECRET:}
+    issuer: xplanet
+    expiration-seconds: ${TOKEN_EXPIRE_SECONDS:86400}
+
 spring:
   application:
     name: xplanet-user

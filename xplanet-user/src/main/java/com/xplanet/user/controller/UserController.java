@@ -2,7 +2,7 @@ package com.xplanet.user.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.xplanet.api.vo.UserProfileVO;
-import com.xplanet.common.auth.TokenUtil;
+import com.xplanet.common.auth.TokenService;
 import com.xplanet.common.exception.BizException;
 import com.xplanet.common.response.ErrorCode;
 import com.xplanet.common.response.R;
@@ -10,8 +10,11 @@ import com.xplanet.user.entity.User;
 import com.xplanet.user.mapper.UserMapper;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
+import javax.validation.Valid;
+import javax.validation.constraints.NotBlank;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -20,7 +23,13 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class UserController {
 
+    /** 与 demo 数据相同成本的固定哈希，避免“用户不存在”路径明显更快。 */
+    private static final String DUMMY_PASSWORD_HASH =
+            "{bcrypt}$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG";
+
     private final UserMapper userMapper;
+    private final PasswordEncoder passwordEncoder;
+    private final TokenService tokenService;
 
     @GetMapping("/{id}")
     public R<UserProfileVO> get(@PathVariable Long id) {
@@ -35,20 +44,22 @@ public class UserController {
     }
 
     /**
-     * 登录:校验用户名(demo 简化,不校验密码),签发 token。
-     * 生产应校验密码哈希(BCrypt)。这里聚焦演示 token 鉴权链路。
+     * 登录:校验用户名与密码哈希，成功后签发短期 JWT。
      *
      * <p>限流防撞库:同一 IP 每分钟最多 5 次登录尝试。
      */
     @PostMapping("/login")
     @com.xplanet.common.ratelimit.RateLimit(key = "user_login", limit = 5, windowSeconds = 60)
-    public R<Map<String, Object>> login(@RequestBody LoginRequest req) {
+    public R<Map<String, Object>> login(@Valid @RequestBody LoginRequest req) {
         User u = userMapper.selectOne(new LambdaQueryWrapper<User>()
                 .eq(User::getUsername, req.getUsername()));
-        if (u == null) {
-            throw new BizException(ErrorCode.USER_NOT_FOUND);
+        String storedHash = u == null || u.getPasswordHash() == null
+                ? DUMMY_PASSWORD_HASH : u.getPasswordHash();
+        boolean passwordMatches = passwordEncoder.matches(req.getPassword(), storedHash);
+        if (u == null || !passwordMatches) {
+            throw new BizException(ErrorCode.USER_CREDENTIALS_INVALID);
         }
-        String token = TokenUtil.issue(u.getId());
+        String token = tokenService.issue(u.getId());
         Map<String, Object> data = new HashMap<>();
         data.put("token", token);
         data.put("userId", u.getId());
@@ -58,7 +69,9 @@ public class UserController {
 
     @Data
     public static class LoginRequest {
+        @NotBlank(message = "用户名不能为空")
         private String username;
-        private String password;  // demo 未校验
+        @NotBlank(message = "密码不能为空")
+        private String password;
     }
 }

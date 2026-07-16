@@ -2,6 +2,8 @@ package com.xplanet.common.auth;
 
 import com.xplanet.common.exception.BizException;
 import com.xplanet.common.response.ErrorCode;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import javax.servlet.http.HttpServletRequest;
@@ -17,7 +19,11 @@ import javax.servlet.http.HttpServletResponse;
  * <p>token 的无状态性同时支撑了「应用多实例水平扩展」——
  * 请求落到哪个实例都能独立鉴权,无需共享 session。
  */
+@Component
+@RequiredArgsConstructor
 public class AuthInterceptor implements HandlerInterceptor {
+
+    private final TokenService tokenService;
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
@@ -27,7 +33,7 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
         String auth = request.getHeader("Authorization");
         String token = (auth != null && auth.startsWith("Bearer ")) ? auth.substring(7) : auth;
-        Long userId = TokenUtil.verify(token);
+        Long userId = tokenService.verify(token);
         if (userId == null) {
             throw new BizException(ErrorCode.USER_NOT_LOGIN);
         }

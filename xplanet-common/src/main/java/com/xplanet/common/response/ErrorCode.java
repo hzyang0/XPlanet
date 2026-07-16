@@ -16,6 +16,7 @@ public enum ErrorCode {
 
     USER_NOT_LOGIN(2001, "未登录"),
     USER_NOT_FOUND(2002, "用户不存在"),
+    USER_CREDENTIALS_INVALID(2003, "用户名或密码错误"),
 
     ARTICLE_NOT_FOUND(3001, "文章不存在"),
     ARTICLE_DELETED(3002, "文章已删除"),
