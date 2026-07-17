@@ -13,7 +13,7 @@ brew install wrk
 
 ```bash
 # 冷启动:第一次基本是回源(慢),之后 L1 + L2 命中
-wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8081
+wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8080
 ```
 
 期望结果(单机 article 实例, 8C16G):
@@ -29,7 +29,7 @@ wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8081
 ## 2. 点赞写入(测 Outbox + MQ + 持久化投影)
 
 ```bash
-wrk -t8 -c500 -d30s -s benchmark/like.lua http://localhost:8082
+wrk -t8 -c500 -d30s -s benchmark/like.lua http://localhost:8080
 ```
 
 当前 `like.lua` 只适合验证“同一用户重复点赞是幂等 no-op”，不能测完整写链路性能。

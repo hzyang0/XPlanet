@@ -1,0 +1,47 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: xplanet-gateway
+  cloud:
+    gateway:
+      httpclient:
+        connect-timeout: 2000
+      globalcors:
+        add-to-simple-url-handler-mapping: true
+        cors-configurations:
+          '[/**]':
+            allowed-origin-patterns: ${GATEWAY_ALLOWED_ORIGIN_PATTERN:*}
+            allowed-methods: GET,POST,PUT,DELETE,OPTIONS
+            allowed-headers: Authorization,Content-Type,Idempotency-Key,X-Trace-Id
+            exposed-headers: X-Trace-Id
+            allow-credentials: false
+            max-age: 3600
+      routes:
+        - id: user-service
+          uri: ${USER_SERVICE_URL:http://localhost:8083}
+          predicates:
+            - Path=/api/user/**
+        - id: article-service
+          uri: ${ARTICLE_SERVICE_URL:http://localhost:8081}
+          predicates:
+            - Path=/api/article/**,/api/comment/**
+        - id: interaction-service
+          uri: ${INTERACTION_SERVICE_URL:http://localhost:8082}
+          predicates:
+            - Path=/api/like/**
+security:
+  token:
+    secret: ${TOKEN_SECRET:}
+    issuer: xplanet
+    expiration-seconds: ${TOKEN_EXPIRE_SECONDS:86400}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+  endpoint:
+    gateway:
+      enabled: true

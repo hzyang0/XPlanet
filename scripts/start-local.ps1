@@ -39,7 +39,8 @@ Write-Host '>>> 启动各 Spring Boot 服务（新窗口）...' -ForegroundColor
 $modules = @(
     @{ Name = "xplanet-user";         Port = 8083 },
     @{ Name = "xplanet-article";      Port = 8081 },
-    @{ Name = "xplanet-interaction";  Port = 8082 }
+    @{ Name = "xplanet-interaction";  Port = 8082 },
+    @{ Name = "xplanet-gateway";      Port = 8080 }
 )
 
 foreach ($m in $modules) {

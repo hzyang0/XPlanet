@@ -104,11 +104,8 @@
 
 <div class="config">
   <div class="wrap">
-    <label>article API</label>
-    <input id="articleBase" value="http://localhost:8081" />
-    <label>like API</label>
-    <input id="likeBase" value="http://localhost:8082" />
-    <input id="userBase" type="hidden" value="http://localhost:8083" />
+    <label>gateway API</label>
+    <input id="apiBase" value="http://localhost:8080" />
     <label>登录</label>
     <input id="loginUser" class="small" value="alice" style="width:70px" placeholder="用户名"/>
     <input id="loginPassword" type="password" value="password" style="width:90px" placeholder="密码"/>
@@ -128,7 +125,7 @@
         <div id="hotList" style="margin-bottom:24px"><div style="color:var(--ink-soft);font-family:var(--mono);font-size:12px">加载中…</div></div>
 
         <div class="section-title">最新文章</div>
-        <div id="articleList"><div class="dim" style="color:var(--ink-soft);font-family:var(--mono);font-size:12px">加载中…(请确认后端 8081 已启动)</div></div>
+        <div id="articleList"><div class="dim" style="color:var(--ink-soft);font-family:var(--mono);font-size:12px">加载中…(请确认 Gateway 8080 已启动)</div></div>
       </div>
 
       <!-- 详情 -->
@@ -173,7 +170,7 @@
 
       <div class="panel">
         <h4>② 点赞削峰</h4>
-        <p class="desc">瞬间发起 50 个并发点赞。Redis 实时计数立即变化,数据库由后台批量异步落库。</p>
+        <p class="desc">瞬间发起 50 个并发请求。点赞状态机吸收同一用户的重复请求，Outbox 保证有效变化可靠投递。</p>
         <button class="demo-btn" onclick="demoBurst()">并发点赞 50 次</button>
         <div class="demo-out" id="burstOut">点击运行</div>
       </div>
@@ -193,8 +190,9 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const articleBase = () => $("articleBase").value.replace(/\/$/, "");
-const likeBase = () => $("likeBase").value.replace(/\/$/, "");
+const apiBase = () => $("apiBase").value.replace(/\/$/, "");
+const articleBase = apiBase;
+const likeBase = apiBase;
 const uid = () => $("uid") ? $("uid").value : "1";
 let TOKEN = null;
 async function doLogin(){
@@ -223,7 +221,7 @@ function authHeaders(extra){
   if (TOKEN) h["Authorization"] = "Bearer " + TOKEN;
   return h;
 }
-const userBase = () => ($("userBase") ? $("userBase").value : "http://localhost:8083").replace(/\/$/, "");
+const userBase = apiBase;
 let currentId = null;
 let liked = false;
 
@@ -245,7 +243,7 @@ async function loadList(page){
     const json = await res.json();
     const pg = json.data;
     if (!pg || !pg.records || pg.records.length === 0){
-      box.innerHTML = '<div style="color:#c2410c;font-family:var(--mono);font-size:12px">暂无文章。请确认后端 article(8081)已启动、数据库已初始化。</div>';
+      box.innerHTML = '<div style="color:#c2410c;font-family:var(--mono);font-size:12px">暂无文章。请确认 Gateway(8080)已启动、数据库已初始化。</div>';
       return;
     }
     box.innerHTML = pg.records.map(a => `
@@ -334,7 +332,7 @@ async function toggleLike(){
     if (!liked){
       const res = await fetch(`${likeBase()}/api/like/${currentId}`, { method:"POST", headers:authHeaders()});
       const j = await res.json();
-      if (j.code === 0){ liked=true; $("likeBtn").classList.add("liked"); $("likeBtn").textContent="♥ 已赞"; toast("点赞成功(已写 Redis + 发 MQ)"); }
+      if (j.code === 0){ liked=true; $("likeBtn").classList.add("liked"); $("likeBtn").textContent="♥ 已赞"; toast(j.data ? "点赞成功，事件已可靠入队" : "已经点过赞，本次没有重复写入"); }
       else { toast(j.msg || "点赞失败"); }
     } else {
       await fetch(`${likeBase()}/api/like/${currentId}`, { method:"DELETE", headers:authHeaders()});
@@ -371,9 +369,9 @@ async function demoBurst(){
   await Promise.all(tasks);
   const cost = (performance.now()-t0).toFixed(0);
   out.innerHTML =
-    `<span class="hl">50 个并发点赞完成,耗时 ${cost} ms</span>\n` +
-    `接口立即返回(只写 Redis + 发 MQ)\n` +
-    `<span class="dim">数据库 like_count 由后台批量异步落库,\n稍等 1~2 秒后回到详情页刷新可见增长。\n这就是「削峰」:写请求快速返回,落库异步合并。</span>`;
+    `<span class="hl">50 个并发请求完成,耗时 ${cost} ms</span>\n` +
+    `同一用户只有第一次状态变化会写入 Outbox\n` +
+    `<span class="dim">其余重复点赞被状态机幂等吸收；有效事件由 MQ 异步投影到 article.like_count。\n这同时验证了削峰与幂等，而不是把50次重复请求伪装成50个点赞。</span>`;
 }
 
 // 演示③:一致性

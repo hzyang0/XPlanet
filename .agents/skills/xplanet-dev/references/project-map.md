@@ -5,9 +5,10 @@
 - Java 17, Maven multi-module reactor, Spring Boot 2.7.18.
 - MyBatis-Plus and MySQL 8 for persistence.
 - Redis 7, Redisson, and Caffeine for shared/local caching, locks, and rate limiting.
-- RocketMQ 4.9.7 for reliable like-event delivery and cache invalidation.
+- RocketMQ 4.9.7 for reliable like-event delivery, cache invalidation, and AI commands.
 - Docker Compose for local MySQL, Redis, RocketMQ nameserver, and broker.
 - `xplanet-web/index.html` is a static single-file demo UI; there is no Node build.
+- Spring Cloud Gateway is the unified external entrypoint. In full Docker mode only port 8080 is published.
 
 ## Modules and ports
 
@@ -15,15 +16,21 @@
 | --- | ---: | --- |
 | `xplanet-common` | - | Shared result types, exceptions, authentication, and rate limiting |
 | `xplanet-api` | - | Cross-service DTO and VO contracts |
+| `xplanet-gateway` | 8080 | Routing, CORS, request TraceId, and first-layer JWT validation |
 | `xplanet-user` | 8083 | User lookup, bcrypt password verification, and JWT/JWS issuing |
 | `xplanet-article` | 8081 | Articles, comments, two-level cache, durable cache-invalidation Outbox, user lookup, durable like-count projection |
 | `xplanet-interaction` | 8082 | Article validation, like state machine, Transactional Outbox, and recoverable RocketMQ relay |
+| `xplanet-ai` | 8084 | AI task control plane, reliable command Outbox, progress SSE, reports, review, and publishing |
+| `xplanet-agent` | 8000 (internal) | Python/LangGraph bounded execution, checkpoints, evidence, writing, and evaluation |
 
 Important entrypoints:
 
+- `xplanet-gateway/.../GatewayApplication.java`
 - `xplanet-user/.../UserApplication.java`
 - `xplanet-article/.../ArticleApplication.java`
 - `xplanet-interaction/.../InteractionApplication.java`
+- `xplanet-ai/.../AiApplication.java`
+- `xplanet-agent/src/xplanet_agent/api.py`
 
 ## Local prerequisites
 
@@ -79,31 +86,35 @@ For a single foreground service:
 mvn -pl xplanet-user -am spring-boot:run
 mvn -pl xplanet-article -am spring-boot:run
 mvn -pl xplanet-interaction -am spring-boot:run
+mvn -pl xplanet-ai -am spring-boot:run
+mvn -pl xplanet-gateway -am spring-boot:run
 ```
 
 ## Health and smoke checks
 
 ```powershell
-Invoke-RestMethod http://localhost:8083/actuator/health
-Invoke-RestMethod http://localhost:8081/actuator/health
-Invoke-RestMethod http://localhost:8082/actuator/health
-Invoke-RestMethod http://localhost:8081/api/article/1
-Invoke-RestMethod 'http://localhost:8081/api/article/list?pageNum=1&pageSize=10'
+Invoke-RestMethod http://localhost:8080/actuator/health
+Invoke-RestMethod http://localhost:8080/api/article/1
+Invoke-RestMethod 'http://localhost:8080/api/article/list?pageNum=1&pageSize=10'
+./scripts/smoke-test.ps1
+./scripts/test-agent-recovery.ps1
 ```
 
 Protected write flows require a token from `POST /api/user/login`. Verify the controller and authentication filter before constructing the request because demo scripts and current code may drift.
 
 ## Reading order by task
 
+- Beginner onboarding: `docs/BEGINNER-GUIDE.md` -> Gateway config/filters -> one controller-to-database request flow.
 - Architecture: root `pom.xml` -> module POMs -> `docs/ARCHITECTURE.md` -> application entrypoints and configs.
 - Persistence: `sql/init.sql` -> entity -> mapper/XML -> service transaction boundary.
 - Cache: article update/delete transaction -> cache-invalidation Outbox relay -> MQ invalidation consumer -> L1/L2 cache manager.
 - Likes: interaction validates the active article through typed OpenFeign -> state transition + Outbox transaction -> leased relay -> RocketMQ -> unique delta inbox -> transactional batch projection.
-- Authentication: user login -> token utility/filter in common -> protected controller endpoint.
+- Authentication: Gateway first-layer validation -> user login -> token utility/interceptor in common -> protected controller and resource ownership check.
+- AI: task transaction + Outbox -> RocketMQ -> Java consumer -> Python Agent graph -> checkpoint/progress/result -> review -> OpenFeign article publish.
 - Performance: benchmark scripts and claims -> implementation/configuration -> fresh measurements. Never repeat benchmark numbers without reproducing or clearly labeling their source.
 
 ## Current verification caveats
 
-- The reactor currently has unit tests in common, user, article, and interaction; keep them green and add focused tests for changed invariants.
+- The reactor has tests across common, gateway, user, article, interaction, and AI; keep them green and add focused tests for changed invariants.
 - A green Maven build still does not prove Redis/RocketMQ/MySQL behavior; run the authenticated API and eventual-consistency smoke flow when infrastructure is available.
 - Preserve Docker volumes by default; `down -v` deletes local database and queue state.

@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   自动切换 RocketMQ 为容器网络广播地址、启动基础设施、执行数据库迁移、构建应用镜像，
-  并等待三个应用健康。若本机 8081/8082/8083 已被 IDE 或本地 JVM 占用，脚本会直接失败。
+  并等待 Gateway 健康。若本机 8080 已被 IDE 或本地 JVM 占用，脚本会直接失败。
 #>
 param(
     [string]$DockerBaseRegistry = $(
@@ -28,7 +28,7 @@ if ([string]::IsNullOrWhiteSpace($env:TOKEN_SECRET) -or $env:TOKEN_SECRET.Length
 }
 
 $occupied = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-    Where-Object { $_.LocalPort -in 8081, 8082, 8083 }
+    Where-Object { $_.LocalPort -eq 8080 }
 if ($occupied) {
     $ports = ($occupied.LocalPort | Sort-Object -Unique) -join ","
     throw "应用端口已被本机进程占用：$ports。请先停止本地 JVM。"
@@ -53,14 +53,14 @@ if ($mysqlHealth -ne "healthy") {
 
 & (Join-Path $PSScriptRoot "migrate-db.ps1")
 
-Write-Host ">>> 构建并启动三个应用容器" -ForegroundColor Cyan
+Write-Host ">>> 构建并启动四个应用容器" -ForegroundColor Cyan
 docker compose -f docker/docker-compose-app.yml up -d --build
 
 $deadline = (Get-Date).AddMinutes(3)
 do {
     Start-Sleep -Seconds 2
     $down = @()
-    foreach ($port in 8081, 8082, 8083) {
+    foreach ($port in 8080) {
         try {
             if ((Invoke-RestMethod "http://localhost:$port/actuator/health" -TimeoutSec 3).status -ne "UP") {
                 $down += $port
