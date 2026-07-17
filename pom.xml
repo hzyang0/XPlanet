@@ -19,6 +19,7 @@
         <module>xplanet-article</module>
         <module>xplanet-interaction</module>
         <module>xplanet-ai</module>
+        <module>xplanet-gateway</module>
     </modules>
 
     <parent>

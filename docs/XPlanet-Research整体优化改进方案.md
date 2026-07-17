@@ -87,6 +87,7 @@
 |---|---:|---|---|
 | `xplanet-common` | - | 响应、异常、鉴权、限流、公共常量 | 已实现，待完善 |
 | `xplanet-api` | - | Java 服务间 DTO/VO 契约 | 已实现 |
+| `xplanet-gateway` | 8080 | 统一路由、CORS、TraceId、JWT 前置校验 | 已实现；Docker 模式唯一外部入口 |
 | `xplanet-user` | 8083 | 用户查询、bcrypt 登录和 JWT 签发 | 已实现；刷新/撤销为可选演进 |
 | `xplanet-article` | 8081 | 文章、评论、热榜、二级缓存、缓存失效 Outbox、点赞持久化投影 | 已实现；热榜和评论分页待完善 |
 | `xplanet-interaction` | 8082 | 点赞状态机、Transactional Outbox、MQ relay | 已实现 |
@@ -96,7 +97,7 @@
 
 基础设施为 MySQL、Redis、RocketMQ，文章热点读使用 Caffeine + Redis 二级缓存，Redisson 用于缓存重建锁。
 
-仓库当前不包含 `xplanet-gateway` 源模块；历史编译产物已清理，不能把网关描述为当前已实现组件。
+仓库已重建 `xplanet-gateway` 源模块。它是客户端统一入口，但不取代下游服务的 JWT 复验和资源所有权校验。
 
 ### 2.2 当前真实优势
 
@@ -138,10 +139,10 @@
 
 #### P2：清理和可维护性
 
-- 当前已有87个 Java 单元测试、10个 Python Agent 测试和10条固定离线评测，并新增真实 MySQL/Redis/RocketMQ/Agent 正常链路 smoke test；缓存失效已完成 broker 停止/恢复故障注入，Agent 已完成节点 checkpoint 后强退、容器重启和 MQ 重投恢复自动化；
+- 当前已有完整 Java Reactor 测试、10个 Python Agent 测试和10条固定离线评测，并新增真实 MySQL/Redis/RocketMQ/Gateway/Agent 正常链路 smoke test；缓存失效已完成 broker 停止/恢复故障注入，Agent 已完成节点 checkpoint 后强退、容器重启和 MQ 重投恢复自动化；
 - 已删除未使用的 Spring Cloud Alibaba BOM 和 `hutool-all`；保留的 Spring Cloud BOM 供 OpenFeign 使用；
 - 已删除未使用的缓存 Key、错误码和未赋值的响应 `traceId`；真正引入 TraceId 时应完成 HTTP/MQ 全链路透传；
-- 静态页面直接配置三个服务地址，缺少统一入口；
+- 静态页面已统一访问 Gateway 8080，不再维护多个服务地址；
 - 历史高 QPS 结果已标记为旧链路数据，新链路仍需重新压测；
 - 已清理历史 gateway 编译产物、重复启动脚本和与当前实现冲突的本地旧文档。
 
@@ -161,11 +162,12 @@
 | ADR-008 | MySQL 是业务事实源，Redis 是缓存/进度/限流，不作为唯一持久化事实 | 已接受 | 降低跨系统一致性风险 |
 | ADR-009 | AI 任务和点赞事件使用 Transactional Outbox + 消费 Inbox | 已接受 | 在不引入分布式事务的前提下实现至少一次可靠投递 |
 | ADR-010 | MVP 不引入 Nacos、Seata、Dubbo、Kubernetes | 已接受 | 当前没有对应规模和一致性需求 |
-| ADR-011 | Gateway、Qdrant、MinIO、监控平台按阶段引入 | 已接受 | 先完成核心闭环，再增加运维复杂度 |
+| ADR-011 | Qdrant、MinIO、监控平台按验证需求分阶段引入 | 已接受 | 先完成核心闭环，再增加运维复杂度 |
 | ADR-012 | 不在 Agent MVP 同时升级 Spring Boot 大版本 | 已接受 | 控制变量，避免迁移风险掩盖业务问题 |
 | ADR-013 | RocketMQ 命令由 Java Consumer 接收，再通过内部 HTTP 调 Python Agent；结果落库成功后确认消息 | 已接受 | 当前 RocketMQ 4.9.7 的 Python 原生客户端存在平台和运行时负担，桥接方案保留异步削峰、至少一次重投和 Java/Python 独立部署边界 |
 | ADR-014 | Agent checkpoint 通过 Java 内部接口持久化到 MySQL `ai_run_step`，不使用 Python 容器本地文件 | 已接受 | 任务事实和运行恢复状态只有一个持久化事实源，容器销毁后仍可恢复 |
 | ADR-015 | Provider 显式路由，默认 `offline-demo`，只有配置密钥后才启用 `openai-web` | 已接受 | CI/面试演示零成本可复现，联网能力可插拔且不会意外产生费用 |
+| ADR-016 | 引入轻量 Gateway 作为唯一外部入口，下游服务继续复验 JWT | 已接受 | 统一路由/CORS/TraceId，同时避免把 Gateway 当作唯一安全边界 |
 
 ### 3.1 OpenFeign 与 HTTP Service Client
 
@@ -191,7 +193,7 @@ OpenFeign只是 HTTP 客户端依赖，不是新的部署服务，也不要求�
 
 ```mermaid
 flowchart LR
-    U["用户 / Web AI 工作台"] --> G["xplanet-gateway<br/>统一鉴权、限流、路由（P1）"]
+    U["用户 / Web AI 工作台"] --> G["xplanet-gateway<br/>路由、CORS、TraceId、JWT 前置校验"]
 
     G --> US["xplanet-user<br/>用户与认证"]
     G --> AS["xplanet-article<br/>文章、评论、缓存、热榜"]
@@ -236,7 +238,7 @@ flowchart LR
 
 | 模块 | 端口 | 类型 | 目标职责 |
 |---|---:|---|---|
-| `xplanet-gateway` | 8080 | Java，可后置 | 统一入口、鉴权上下文、可信代理头、限流、TraceId、SSE 路由 |
+| `xplanet-gateway` | 8080 | Java，已实现 | 统一入口、路由、CORS、TraceId、JWT 前置校验、SSE 长连接路由 |
 | `xplanet-user` | 8083 | Java | 用户、密码、Token、个人配置 |
 | `xplanet-article` | 8081 | Java | 文章、评论、缓存、热榜、AI 报告发布投影 |
 | `xplanet-interaction` | 8082 | Java | 点赞状态机、关系事实、事件 Outbox |
@@ -270,7 +272,7 @@ flowchart LR
 | 新增 | AI任务、运行、来源、证据、引用、成本、Outbox/Inbox 表 | 否，复用 MySQL | Phase 1 |
 | 新增 | Redis Stream进度通道和 SSE 接口 | 否，复用 Redis 和 Java 服务 | Phase 1 |
 | 新增 | Qdrant向量数据库 | 是 | Phase 2 |
-| 重建 | `xplanet-gateway` 源模块 | 是 | Phase 4 |
+| 重建 | `xplanet-gateway` 源模块 | 是 | Phase 4，已完成基础版 |
 | 升级 | Vue 3 + TypeScript AI 工作台 | 是，构建后可静态部署 | Phase 4 |
 | 可选 | MinIO、OpenTelemetry、Prometheus/Grafana、LLM Trace平台 | 是 | Phase 4/5 |
 
@@ -556,15 +558,17 @@ POST/DELETE like
 - 上传文件进行类型、大小和恶意内容校验；
 - MCP 工具使用 allowlist，不自动连接未知服务器。
 
-### 10.3 Gateway 引入时机
+### 10.3 Gateway 当前实现与边界
 
-Gateway 在 AI MVP 跑通后作为 P1 引入，解决：
+Gateway 已在 AI MVP 跑通后引入，当前解决：
 
 - 前端只有一个 Base URL；
 - 统一鉴权和可信代理头；
 - AI 任务、普通 API 使用不同限流策略；
 - TraceId 统一生成；
 - 跨域和 SSE 路由统一处理。
+
+当前没有在 Gateway 重复实现业务权限、资源所有权或复杂限流。下游服务继续复验 JWT，并检查任务、报告、文章等资源是否属于当前用户；Gateway 只做第一层快速拒绝。Docker 模式仅暴露 8080，因此下游服务可显式信任 Gateway 写入的代理头；本地直连模式保持默认不信任。
 
 Gateway 不等于必须引入 Nacos。第一阶段仍可通过环境变量和 Docker 服务名路由。
 
@@ -713,7 +717,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 3. [x] user 容器补全 Redis 和外部 Token 配置；
 4. [x] 使用统一、明确的 Compose 网络名称；
 5. [x] 移除过时的顶层 `version`；
-6. [x] 启动脚本执行依赖就绪、四个 Java 应用和 Agent 健康检查；
+6. [x] 启动脚本执行依赖就绪、五个 Java 应用和 Agent 健康检查；
 7. [x] AI Agent 仅暴露 Compose 内部端口，外部通过 AI 服务访问；
 8. [x] 提供 Compose 配置校验、Flyway 自动迁移和端到端 smoke test。
 
@@ -791,7 +795,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 - [ ] Vue 3 + TypeScript AI 工作台；
 - [ ] Agent 节点时间线、证据面板、报告编辑器；
-- [ ] Gateway统一入口；
+- [x] Gateway统一入口（基础路由、CORS、TraceId、JWT 前置校验）；
 - [ ] TraceId 全链路；
 - [ ] 任务、模型、工具、MQ、缓存指标面板（Agent 与 checkpoint Micrometer 指标已完成，Grafana 面板未做）；
 - [x] Docker Compose 一键启动；
@@ -814,7 +818,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 ### P0：最先实施
 
-1. `BASE-001`：已建立87个 Java 测试、10个 Python 测试、10条固定离线评测和可重复执行的真实中间件/Agent smoke/recovery test；
+1. `BASE-001`：已建立完整 Java Reactor 测试、10个 Python 测试、10条固定离线评测和可重复执行的真实中间件/Gateway/Agent smoke/recovery test；
 2. `AI-001`：已创建 AI 任务状态机、预算边界、用户级幂等和数据库表；
 3. `AI-002`：已实现 Transactional Outbox 请求/取消命令和带 Inbox 的 Agent 消费桥接；
 4. `AI-003`：已实现六节点 Agent 最小图和有界执行；
@@ -831,7 +835,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 - 真实联网质量评测、Claim—Evidence 语义支持验证和错误分类；
 - Qdrant RAG；
-- Gateway统一入口；
+- Gateway 统一入口已完成基础版，后续补全服务日志/MQ/Feign Trace 上下文；
 - Feign超时/熔断/TraceId；
 - 缓存可靠失效；
 - 点赞持久化投影；
@@ -924,6 +928,7 @@ Qdrant和MinIO在对应阶段加入 Compose。所有密钥通过 `.env.example` 
 
 | 版本 | 日期 | 变更 | 影响 |
 |---|---|---|---|
+| v2.8 | 2026-07-17 | 重建 Spring Cloud Gateway 8080，增加路由、CORS、TraceId 和 JWT 前置校验；Docker 仅暴露统一入口，脚本、静态页和冒烟测试全部改走 Gateway；新增零基础项目导读 | 93项 Java、10项 Python、10条离线评测以及真实 Gateway 业务闭环和 Agent 强退恢复通过；下游服务保留二次鉴权，Nacos/Seata 仍按规模不引入 |
 | v2.7 | 2026-07-16 | 新增 V007 版本化节点 checkpoint、断点恢复、持久化 deadline、3次有界重试和强退恢复脚本；新增10条离线评测、Agent/节点 Micrometer 指标、模型用量事务落库，以及默认离线/可选 OpenAI Web Search Provider | Phase 2 可靠性基础完成；87项 Java 与10项 Python 测试、10条结构评测、实库迁移、完整 smoke 和 Agent 崩溃恢复用于初步验收；真实联网调用未获密钥/费用授权，语义引用核验、RAG 与完整观测平台仍明确为后续项 |
 | v2.6 | 2026-07-16 | 新增 `xplanet-agent` FastAPI/LangGraph 六节点有界工作流、Java MQ 消费桥、Redis Stream/SSE、结果闭包校验与事务落库、Human-in-the-loop 审核及 `reportId` 幂等文章发布；新增 V006 和完整 AI smoke | Phase 1 初步闭环完成；81项 Java 与4项 Python 测试、实库迁移、7步进度、证据闭包、跨用户隔离、重复发布和取消均通过；真实模型/搜索、checkpoint 和评测明确进入 Phase 2 |
 | v2.5 | 2026-07-16 | 新增 `xplanet-ai` 8084 控制面、V005 十张 AI 任务/运行/证据/报告/成本/Outbox-Inbox 表、私有读写鉴权、用户级载荷幂等、预算上限、版本条件取消和可靠请求/取消命令；Docker 与 smoke 扩展为四服务 | Java 控制面已具备可验证的长任务治理基础；69项单测、实库迁移、跨用户拒绝、两条AI命令发送和三类Outbox零积压已通过；Python Agent仍明确为下一阶段 |

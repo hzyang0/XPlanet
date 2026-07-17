@@ -3,7 +3,12 @@
 ## 1. 模块划分
 
 ```
-   ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐
+                     ┌────────────────────────────┐
+ 客户端 ──HTTP──────►│ Gateway 8080              │
+                     │路由/CORS/TraceId/前置鉴权  │
+                     └─────────────┬──────────────┘
+        ┌──────────────┬───────────┴───┬────────────────┐
+   ┌────▼───────┐ ┌────▼───────┐ ┌─────▼──────┐ ┌──────▼─────┐
    │  Article   │ │Interaction │ │    User    │ │ AI Control │
    │   (8081)   │ │   (8082)   │ │   (8083)   │ │   (8084)   │
    │文章+审核发布│ │点赞状态/Outbox│ │  认证用户   │ │任务/报告/SSE│
@@ -195,18 +200,18 @@ POST /api/ai/tasks
 - 点赞事实与计数投影当前共享一个 MySQL 实例，但已按表明确 interaction/article 所有权；后续拆库时协议保持不变
 - Outbox/投影目前只有日志和表状态，尚未接入积压量、失败率和最老事件时长监控
 - 单机 Redis,没起集群/哨兵
-- article 通过 OpenFeign 调 user 服务；熔断和 TraceId 透传仍待完善
+- article 通过 OpenFeign 调 user 服务；Gateway 已生成请求 TraceId，但服务日志/MQ/Feign 的完整上下文透传和熔断仍待完善
 - 没接配置中心 / 注册中心,服务地址写在配置里
 - AI 已完成离线 Agent、checkpoint、故障恢复、基础评测和 Micrometer 指标；真实联网质量、语义引用核验、Prompt 注入/SSRF 防护和 RAG 尚未完成
 
-**关于刻意不做的部分**:网关、注册中心、分布式事务、监控全家桶在这个业务规模下属于过度设计,没有引入。
+**关于刻意不做的部分**:当前只引入了轻量 Gateway；注册中心、分布式事务和监控全家桶在这个业务规模下收益不足，没有引入。
 缓存一致性也没上 Canal binlog 兜底——社区场景下「双删 + MQ 广播」已足够,binlog 兜底是为不存在的问题加复杂度。
 工程的判断力体现在「该用什么」,也体现在「不该用什么」。
 
 ## 7. 部署与迁移
 
 - 本地混合模式通过 `scripts/setup-infra.ps1` 启动中间件，RocketMQ broker 广播宿主机地址，Java 服务在 IDE 或本机 JVM 中运行；
-- 全 Docker 模式通过 `scripts/start-docker.ps1` 切换 broker 容器地址、执行 Flyway、构建四个 Java 应用和一个 Python Agent 镜像并等待健康；
+- 全 Docker 模式通过 `scripts/start-docker.ps1` 切换 broker 容器地址、执行 Flyway、构建五个 Java 应用和一个 Python Agent 镜像并等待健康；宿主机只暴露 Gateway 8080；
 - `sql/init.sql` 负责新数据卷的当前完整结构，Flyway 对历史数据库建立 V4 baseline，V005 增加 AI 控制面，V006 增加 AI 报告—文章幂等发布投影，V007 增加运行步骤 checkpoint；以后继续追加版本脚本；
 - 两种模式共用固定 `xplanet-net` 网络，但分别使用 `broker-host.conf` 和 `broker-docker.conf`，避免 broker 把客户端无法访问的地址注册到 NameServer；
-- CI 执行 87 项 Java 测试、10 项 Python Agent 测试、10 条离线评测、两份 Compose 配置解析和全部 PowerShell 脚本语法检查；真实 MySQL/Redis/RocketMQ/Agent 行为由 `scripts/smoke-test.ps1` 与 `scripts/test-agent-recovery.ps1` 验证。
+- 当前执行 93 项 Java 测试、10 项 Python Agent 测试、10 条离线评测、两份 Compose 配置解析和全部 PowerShell 脚本语法检查；真实 MySQL/Redis/RocketMQ/Gateway/Agent 行为由 `scripts/smoke-test.ps1` 与 `scripts/test-agent-recovery.ps1` 验证。

@@ -10,6 +10,7 @@
 param(
     [string]$Username = "alice",
     [string]$Password = "password",
+    [string]$GatewayBaseUrl = "http://localhost:8080",
     [int]$TimeoutSeconds = 120
 )
 
@@ -56,7 +57,7 @@ try {
     } "故障注入 Agent 健康"
 
     $loginBody = @{ username = $Username; password = $Password } | ConvertTo-Json
-    $login = Invoke-RestMethod -Method Post -Uri "http://localhost:8083/api/user/login" `
+    $login = Invoke-RestMethod -Method Post -Uri "$GatewayBaseUrl/api/user/login" `
         -ContentType "application/json; charset=utf-8" -Body $loginBody -TimeoutSec 10
     if ($login.code -ne 0) { throw "登录失败" }
     $headers = @{
@@ -70,13 +71,13 @@ try {
         maxTokens = 4000
         deadlineSeconds = 120
     } | ConvertTo-Json
-    $created = Invoke-RestMethod -Method Post -Uri "http://localhost:8084/api/ai/tasks" `
+    $created = Invoke-RestMethod -Method Post -Uri "$GatewayBaseUrl/api/ai/tasks" `
         -Headers $headers -ContentType "application/json; charset=utf-8" -Body $body -TimeoutSec 10
     if ($created.code -ne 0) { throw "创建恢复测试任务失败" }
     $taskId = [long]$created.data.id
 
     Wait-Until {
-        (Invoke-RestMethod -Uri "http://localhost:8084/api/ai/tasks/$taskId" `
+        (Invoke-RestMethod -Uri "$GatewayBaseUrl/api/ai/tasks/$taskId" `
             -Headers @{ Authorization = $headers.Authorization } -TimeoutSec 10).data.status -eq "WAITING_REVIEW"
     } "Agent 重启后从 checkpoint 完成任务"
 

@@ -41,30 +41,30 @@
 
 > 默认 `offline-demo` 用于零成本、可复现验收；另提供显式启用的 `openai-web` Responses API + Web Search 适配器。真实路径需要 API Key，目前只完成模拟契约测试，不能把离线评测结果描述为联网回答质量或事实正确率。
 
-> 刻意没有引入网关、注册中心、分布式事务、监控全家桶等——在这个业务规模下属于过度设计。
+> 已引入轻量 Spring Cloud Gateway 作为统一外部入口；注册中心、分布式事务和监控全家桶仍按业务规模暂不引入。
 > 高可用(集群/哨兵/多实例)作为演进方向写在 [`docs/HA-AND-DEGRADE.md`](docs/HA-AND-DEGRADE.md),按需扩展。
 > 工程的价值在于「按场景选型」,而不是技术数量。
 
 ## 架构
 
 ```
- 用户/演示页 ──→ Article 8081 / Interaction 8082 / User 8083 / AI 8084
-                    │              │              │          │
-                    └──────────────┴──────────────┴──────────┼──→ MySQL
-                                                           ├──→ Redis
- AI Outbox ──→ RocketMQ ──→ AI Java Consumer ──HTTP──→ Agent 8000
-                                                           │
-                  来源/证据/报告 ←──事务落库── AI 8084 ←───┘
-                  浏览器进度     ←──── SSE ─── Redis Stream
-                  人工确认       ──→ AI ──OpenFeign──→ Article 幂等发布
+ 用户/演示页 ──→ Gateway 8080 ─┬─→ Article 8081
+                               ├─→ Interaction 8082
+                               ├─→ User 8083
+                               └─→ AI 8084 ──HTTP──→ Agent 8000
+                                      │                  │
+ MySQL ←── 业务事实/Outbox ────────────┤                  │
+ Redis ←── 缓存/限流/进度流 ───────────┤                  │
+ RocketMQ ←── 可靠异步命令 ────────────┴──────────────────┘
 ```
 
-详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+第一次接触项目请先读 [`docs/BEGINNER-GUIDE.md`](docs/BEGINNER-GUIDE.md)，架构细节见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
 ## 模块说明
 
 | 模块 | 端口 | 职责 | 关键特性 |
 |---|---|---|---|
+| `xplanet-gateway` | 8080 | 统一外部入口 | **路由、CORS、TraceId、JWT 前置校验；Docker 模式唯一暴露端口** |
 | `xplanet-common` | - | 公共响应、异常、常量 | 全局异常处理、缓存 key 规范 |
 | `xplanet-api` | - | DTO / VO | 跨服务数据契约 |
 | `xplanet-article` | 8081 | 文章服务 | **二级缓存、延迟双删、批量消费点赞落库、列表分页、评论、限流、调用 user 服务** |
@@ -77,7 +77,7 @@
 
 ### 方式一：本地混合模式（开发推荐）
 
-推荐:中间件用 Docker，Python Agent 和 4 个 Java 服务用 IDE / 命令行跑（便于断点调试）。
+推荐:中间件用 Docker，Python Agent 和 5 个 Java 服务用 IDE / 命令行跑（便于断点调试）。
 
 先设置所有服务共享的 JWT 签名密钥（至少32字符，实际使用请生成随机值）：
 
@@ -104,7 +104,7 @@ Docker Compose 用户可复制 `.env.example` 为 `.env` 后替换其中的示�
 mvn -DskipTests clean install
 ```
 
-#### 3. 启动 Python Agent 和 4 个 Java 服务
+#### 3. 启动 Python Agent 和 5 个 Java 服务
 
 先在一个终端启动内部 Agent：
 
@@ -124,7 +124,7 @@ $env:OPENAI_API_KEY="replace-with-your-key"
 $env:OPENAI_MODEL="gpt-5.6-terra"
 ```
 
-IDEA 直接 Run:`ArticleApplication`(8081)、`InteractionApplication`(8082)、`UserApplication`(8083)、`AiApplication`(8084)。
+IDEA 直接 Run:`ArticleApplication`(8081)、`InteractionApplication`(8082)、`UserApplication`(8083)、`AiApplication`(8084)、`GatewayApplication`(8080)。先启动下游服务，最后启动 Gateway。
 
 或命令行(Windows 可用 `scripts/start-local.ps1` 一键起):
 ```bash
@@ -132,28 +132,29 @@ mvn -pl xplanet-article     -am spring-boot:run
 mvn -pl xplanet-interaction -am spring-boot:run
 mvn -pl xplanet-user        -am spring-boot:run
 mvn -pl xplanet-ai          -am spring-boot:run
+mvn -pl xplanet-gateway     -am spring-boot:run
 ```
 
 #### 4. 验证
 
 ```bash
 # 文章详情(走二级缓存,读操作免登录)
-curl http://localhost:8081/api/article/1
+curl http://localhost:8080/api/article/1
 
 # 文章列表(分页)
-curl "http://localhost:8081/api/article/list?pageNum=1&pageSize=10"
+curl "http://localhost:8080/api/article/list?pageNum=1&pageSize=10"
 
 # 登录拿 token(写操作需要)
 TOKEN=$(curl -s -X POST -H "Content-Type: application/json" \
-  -d '{"username":"alice","password":"password"}' http://localhost:8083/api/user/login \
+  -d '{"username":"alice","password":"password"}' http://localhost:8080/api/user/login \
   | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
 
 # 点赞(带 token,异步落库)
-curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8082/api/like/1
+curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/like/1
 
 # 发评论(带 token)
 curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"articleId":1,"content":"不错"}' http://localhost:8081/api/comment
+  -d '{"articleId":1,"content":"不错"}' http://localhost:8080/api/comment
 ```
 
 或直接打开 `xplanet-web/index.html`:先在顶部用用户名(alice/bob)登录,再操作。
@@ -205,6 +206,7 @@ xplanet/
 ├── pom.xml
 ├── xplanet-common/          # 公共
 ├── xplanet-api/             # 契约
+├── xplanet-gateway/         # 统一外部入口、路由、CORS、TraceId、前置鉴权
 ├── xplanet-article/         # 文章服务 ★ 核心
 ├── xplanet-interaction/     # 点赞服务 ★ 核心
 ├── xplanet-user/            # 用户服务
@@ -225,6 +227,7 @@ xplanet/
 ├── benchmark/               # wrk 压测脚本
 └── docs/
     ├── ARCHITECTURE.md
+    ├── BEGINNER-GUIDE.md
     ├── EXPERIMENTS.md
     └── benchmark-results.md
 ```

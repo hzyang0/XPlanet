@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   自动切换 RocketMQ 为容器网络广播地址、启动基础设施、执行数据库迁移、构建应用镜像，
-  并等待四个应用健康。若本机 8081/8082/8083/8084 已被 IDE 或本地 JVM 占用，脚本会直接失败。
+  并等待五个应用健康。Docker 模式只向宿主机暴露 Gateway 8080；其余服务只在容器网络中可达。
 #>
 param(
     [string]$DockerBaseRegistry = $(
@@ -34,7 +34,7 @@ if ($env:AGENT_INTERNAL_TOKEN.Length -lt 32) {
 }
 
 $occupied = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-    Where-Object { $_.LocalPort -in 8081, 8082, 8083, 8084 }
+    Where-Object { $_.LocalPort -eq 8080 }
 if ($occupied) {
     $ports = ($occupied.LocalPort | Sort-Object -Unique) -join ","
     throw "应用端口已被本机进程占用：$ports。请先停止本地 JVM。"
@@ -59,20 +59,29 @@ if ($mysqlHealth -ne "healthy") {
 
 & (Join-Path $PSScriptRoot "migrate-db.ps1")
 
-Write-Host ">>> 构建并启动四个应用容器" -ForegroundColor Cyan
+Write-Host ">>> 构建并启动五个应用容器和 Agent" -ForegroundColor Cyan
 docker compose -f docker/docker-compose-app.yml up -d --build
 
 $deadline = (Get-Date).AddMinutes(3)
 do {
     Start-Sleep -Seconds 2
     $down = @()
-    foreach ($port in 8081, 8082, 8083, 8084) {
+    try {
+        if ((Invoke-RestMethod "http://localhost:8080/actuator/health" -TimeoutSec 3).status -ne "UP") {
+            $down += "gateway"
+        }
+    } catch {
+        $down += "gateway"
+    }
+    foreach ($service in "article:8081", "interaction:8082", "user:8083", "ai:8084") {
         try {
-            if ((Invoke-RestMethod "http://localhost:$port/actuator/health" -TimeoutSec 3).status -ne "UP") {
-                $down += $port
+            $status = docker exec xp-agent python -c `
+                "import json,urllib.request; print(json.load(urllib.request.urlopen('http://$service/actuator/health',timeout=2))['status'])" 2>$null
+            if (($status | Out-String).Trim() -ne "UP") {
+                $down += $service
             }
         } catch {
-            $down += $port
+            $down += $service
         }
     }
 } while ($down.Count -gt 0 -and (Get-Date) -lt $deadline)
@@ -92,3 +101,4 @@ if ($agentHealth -ne "healthy") {
 docker compose -f docker/docker-compose-infra.yml ps
 docker compose -f docker/docker-compose-app.yml ps
 Write-Host ">>> XPlanet 全 Docker 环境已就绪" -ForegroundColor Green
+Write-Host ">>> 统一入口：http://localhost:8080" -ForegroundColor Green

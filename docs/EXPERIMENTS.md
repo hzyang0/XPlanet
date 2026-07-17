@@ -32,7 +32,7 @@
 
 ### 条件
 
-- 全 Docker 环境：MySQL、Redis、RocketMQ、4 个 Java 服务和 Python Agent；
+- 全 Docker 环境：MySQL、Redis、RocketMQ、Gateway、4 个业务 Java 服务和 Python Agent；
 - 故障点：`PARALLEL_RESEARCH` checkpoint 已经成功写入 MySQL 后，Agent 进程执行 `os._exit(17)`；
 - 恢复机制：容器自动重启，RocketMQ 未确认消息重投，工作流读取 checkpoint 后从 `EVIDENCE_BUILDER` 继续；
 - 命令：
@@ -45,13 +45,35 @@
 
 | 证据 | 本次结果 |
 |---|---:|
-| Task ID | 17 |
+| Task ID | 26 |
 | Completed Checkpoint Steps | 7 |
 | Run Attempts | 2 |
 | Task Version | 4 |
 | Final State | `WAITING_REVIEW` |
 
 结论只覆盖一次确定性故障注入：已经完成的 Validate、Planner 和 Research 节点没有重新执行，后续节点完成并进入人工审核。它不是高并发恢复率或长期稳定性测试。
+
+## 2026-07-17：Gateway 全链路验收
+
+### 条件
+
+- Docker 模式只向宿主机发布 Gateway 8080，业务服务 8081～8084 和 Agent 8000 只在容器网络可达；
+- 所有登录、文章、点赞和 AI 请求均通过 Gateway；
+- 使用 `offline-demo` Agent，不调用外部模型；
+- 命令：`./scripts/smoke-test.ps1`。
+
+### 结果
+
+| 验证项 | 本次结果 |
+|---|---|
+| Gateway 健康和 4 条路由 | 通过 |
+| CORS OPTIONS 预检 | HTTP 200，允许配置的 Origin |
+| 无 Token 写请求 | HTTP 401 / 业务码 2001 |
+| 请求与响应 `X-Trace-Id` | 通过 |
+| 文章、缓存 Outbox、点赞幂等和持久化计数 | 通过 |
+| AI 7 节点、checkpoint、证据闭包、审核和幂等发布 | 通过，Task ID 24，发布 Article ID 110 |
+
+此结果证明本机这套 Compose 中组件可以协同工作，不代表生产高可用、安全攻防或容量结论。Gateway 当前完成入口级 TraceId；服务日志 MDC、Feign 和 MQ 的完整 Trace 上下文仍是后续项。
 
 ## 可选 OpenAI Web Search Provider
 

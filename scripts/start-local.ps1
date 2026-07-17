@@ -1,7 +1,7 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  在本机启动 4 个 Spring Boot 服务（各开一个独立 PowerShell 窗口）
+  在本机启动 5 个 Spring Boot 服务（各开一个独立 PowerShell 窗口）
 
 .DESCRIPTION
   请先用 docker compose -f docker/docker-compose-infra.yml up -d 启动中间件,
@@ -43,7 +43,8 @@ $modules = @(
     @{ Name = "xplanet-user";         Port = 8083 },
     @{ Name = "xplanet-article";      Port = 8081 },
     @{ Name = "xplanet-interaction";  Port = 8082 },
-    @{ Name = "xplanet-ai";           Port = 8084 }
+    @{ Name = "xplanet-ai";           Port = 8084 },
+    @{ Name = "xplanet-gateway";      Port = 8080 }
 )
 
 foreach ($m in $modules) {
@@ -71,6 +72,8 @@ $doneMsg = @'
   interaction:  http://localhost:8082/actuator/health
   user:         http://localhost:8083/actuator/health
   ai:           http://localhost:8084/actuator/health
-  演示页:       打开 xplanet-web/index.html（article 指向 8081,like 指向 8082）
+  gateway:      http://localhost:8080/actuator/health
+  统一 API:     http://localhost:8080
+  演示页:       打开 xplanet-web/index.html（只访问 Gateway 8080）
 '@
 Write-Host $doneMsg -ForegroundColor Green

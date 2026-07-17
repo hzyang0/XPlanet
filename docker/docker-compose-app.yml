@@ -4,7 +4,7 @@
 # 本 compose 加入基础设施的网络,直接用服务名(mysql/redis/rocketmq-namesrv)互访,
 # 不再使用 host.docker.internal。
 #
-# 注:本地开发更推荐「混合模式」——中间件用 Docker,4 个 Java 服务用 IDE 跑,便于断点调试。
+# 注:本地开发更推荐「混合模式」——中间件用 Docker,5 个 Java 服务用 IDE 跑,便于断点调试。
 #     全 Docker 模式适合演示 / 部署。
 
 services:
@@ -24,10 +24,8 @@ services:
       USER_SERVICE_URL: http://user:8083
       TOKEN_SECRET: ${TOKEN_SECRET}
       TOKEN_EXPIRE_SECONDS: ${TOKEN_EXPIRE_SECONDS:-86400}
-      TRUST_FORWARDED_HEADERS: ${TRUST_FORWARDED_HEADERS:-false}
+      TRUST_FORWARDED_HEADERS: "true"
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN}
-    ports:
-      - "8081:8081"
     networks:
       - xp-net
 
@@ -47,9 +45,7 @@ services:
       ARTICLE_SERVICE_URL: http://article:8081
       TOKEN_SECRET: ${TOKEN_SECRET}
       TOKEN_EXPIRE_SECONDS: ${TOKEN_EXPIRE_SECONDS:-86400}
-      TRUST_FORWARDED_HEADERS: ${TRUST_FORWARDED_HEADERS:-false}
-    ports:
-      - "8082:8082"
+      TRUST_FORWARDED_HEADERS: "true"
     networks:
       - xp-net
 
@@ -67,9 +63,7 @@ services:
       REDIS_HOST: redis
       TOKEN_SECRET: ${TOKEN_SECRET}
       TOKEN_EXPIRE_SECONDS: ${TOKEN_EXPIRE_SECONDS:-86400}
-      TRUST_FORWARDED_HEADERS: ${TRUST_FORWARDED_HEADERS:-false}
-    ports:
-      - "8083:8083"
+      TRUST_FORWARDED_HEADERS: "true"
     networks:
       - xp-net
 
@@ -119,8 +113,33 @@ services:
     depends_on:
       agent:
         condition: service_healthy
+    networks:
+      - xp-net
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.app
+      args:
+        MODULE: xplanet-gateway
+        BASE_REGISTRY: ${DOCKER_BASE_REGISTRY:-docker.io/library}
+    container_name: xp-gateway
+    restart: unless-stopped
+    environment:
+      TOKEN_SECRET: ${TOKEN_SECRET}
+      TOKEN_EXPIRE_SECONDS: ${TOKEN_EXPIRE_SECONDS:-86400}
+      USER_SERVICE_URL: http://user:8083
+      ARTICLE_SERVICE_URL: http://article:8081
+      INTERACTION_SERVICE_URL: http://interaction:8082
+      AI_SERVICE_URL: http://ai:8084
+      GATEWAY_ALLOWED_ORIGIN_PATTERN: ${GATEWAY_ALLOWED_ORIGIN_PATTERN:-*}
+    depends_on:
+      - user
+      - article
+      - interaction
+      - ai
     ports:
-      - "8084:8084"
+      - "8080:8080"
     networks:
       - xp-net
 
