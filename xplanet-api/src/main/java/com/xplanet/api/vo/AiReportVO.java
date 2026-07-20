@@ -2,6 +2,7 @@ package com.xplanet.api.vo;
 
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,6 +23,7 @@ public class AiReportVO {
     private List<SourceVO> sources = new ArrayList<>();
     private List<EvidenceVO> evidence = new ArrayList<>();
     private List<CitationVO> citations = new ArrayList<>();
+    private List<UsageVO> usage = new ArrayList<>();
 
     @Data
     public static class SourceVO {
@@ -46,5 +48,17 @@ public class AiReportVO {
         private String claimId;
         private Long evidenceId;
         private Double supportScore;
+    }
+
+    @Data
+    public static class UsageVO {
+        private String nodeName;
+        private String provider;
+        private String model;
+        private Integer inputTokens;
+        private Integer outputTokens;
+        private BigDecimal estimatedCost;
+        private Long latencyMs;
+        private Integer retryCount;
     }
 }

@@ -14,7 +14,7 @@ spring:
           '[/**]':
             allowed-origin-patterns: ${GATEWAY_ALLOWED_ORIGIN_PATTERN:*}
             allowed-methods: GET,POST,PUT,DELETE,OPTIONS
-            allowed-headers: Authorization,Content-Type,Idempotency-Key,X-Trace-Id
+            allowed-headers: Authorization,Content-Type,Idempotency-Key,X-Trace-Id,Last-Event-ID
             exposed-headers: X-Trace-Id
             allow-credentials: false
             max-age: 3600

@@ -2,7 +2,7 @@
 
 > 面向开发者的可追溯研究与社区平台：高并发社区底座、Agent 工作流、人工审核和幂等发布已形成首个可运行闭环。
 
-> **演进说明（2026-07-20）**：当前代码是可运行的 v2 基线；后续只按 [秋招版最终方案](docs/XPlanet-秋招版最终方案.md) 实施，重点补齐可视化 Research Workspace、单 Agent 动态工具循环、Claim–Evidence 质量闭环、站内 RAG 和可复现评测。目标能力在完成验收前不会描述为已实现。
+> **演进说明（2026-07-20）**：当前代码由可运行的 v2 可靠性底座和已完成的秋招版 Phase 1 Research Workspace 组成；后续只按 [秋招版最终方案](docs/XPlanet-秋招版最终方案.md) 实施动态工具循环、Claim–Evidence 质量闭环、站内 RAG 和可复现评测。目标能力在完成验收前不会描述为已实现。
 
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.18-brightgreen.svg)](https://spring.io/projects/spring-boot)
@@ -33,6 +33,7 @@
 - **文章列表分页 + 评论(两级嵌套)**:完整的社区业务闭环
 
 **AI 研究控制面（当前已实现）**
+- **Research Workspace**：无需 Node 构建即可运行的三栏工作台，覆盖登录、任务创建/列表/取消、带鉴权 SSE 重连、节点时间线、来源/Evidence/Citation、模型用量、报告编辑和人工发布
 - **任务状态与请求幂等**：`xplanet-ai` 管理私有研究任务、运行实例、预算上限和版本条件状态迁移
 - **可靠长任务命令**：任务/运行/Outbox 同事务提交，带租约 relay 向 RocketMQ 投递请求与取消命令
 - **可追溯 Agent 图**：`xplanet-agent` 用 LangGraph 执行输入校验、规划、研究、证据整理、写作和 Critic，工具次数、来源数和总超时均有上限
@@ -159,7 +160,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
   -d '{"articleId":1,"content":"不错"}' http://localhost:8080/api/comment
 ```
 
-或直接打开 `xplanet-web/index.html`:先在顶部用用户名(alice/bob)登录,再操作。
+推荐在仓库根目录执行 `python -m http.server 4173 --directory xplanet-web`，然后访问 `http://127.0.0.1:4173`；也可以直接打开 `xplanet-web/index.html`。先在顶部用用户名 `alice`/`bob` 登录，再进入研究工作台。
 本地初始化账号 `alice`、`bob`、`demo` 的演示密码均为 `password`，数据库中只保存 bcrypt 哈希。
 
 全部服务与中间件都启动后，可执行可重复的端到端冒烟测试：

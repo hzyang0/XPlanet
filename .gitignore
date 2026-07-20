@@ -27,6 +27,7 @@ Thumbs.db
 # Logs
 logs/
 *.log
+.playwright-cli/
 hs_err_pid*
 
 # 本地配置 / 敏感

@@ -62,9 +62,9 @@ XPlanet 秋招版不再追求“大而全的企业级多 Agent 平台”，也�
 | 报告人工审核 + OpenFeign 幂等发布 | Human-in-the-loop 和业务闭环 | 保留 |
 | 离线 Provider、pytest、Maven 测试和 smoke 脚本 | 零成本回归基础 | 扩充真实质量评测 |
 
-### 2.2 当前真正缺少的四项能力
+### 2.2 基线差距与实施状态
 
-1. **用户看不见 Agent**：演示页仍以文章、评论和点赞为中心，没有完整研究工作台；
+1. **Research Workspace（已完成）**：现已展示任务、预算、SSE 节点时间线、来源、Evidence、Citation、模型用量、报告审核和发布；
 2. **Agent 没有真实决策循环**：Planner 固定三步，联网 Provider 一次调用同时完成搜索和写作；
 3. **站内知识没有进入 Agent 工具**：社区和 Agent 只有“报告发布文章”的单向关系；
 4. **质量数据不够**：当前主要验证结构闭包，不能证明 Claim 被 Evidence 语义支持，也没有 RAG Recall@K 和真实任务成功率。
@@ -510,6 +510,8 @@ xplanet-web/
 
 ### Phase 1：Agent 工作台纵向闭环
 
+状态：`已完成（2026-07-20）`
+
 目标：不改 Agent 算法，先让已有真实链路完整可见。
 
 任务：
@@ -527,6 +529,14 @@ xplanet-web/
 - Python `pytest`；
 - offline 模式完整 smoke；
 - 浏览器 E2E：登录→创建→SSE→报告→发布→重复发布。
+
+验收记录（2026-07-20）：
+
+- 5 个前端脚本通过 `node --check`；
+- Maven 全量 94 个测试通过，Python 10 个测试通过；
+- Playwright 真实浏览器完成登录、任务创建、7 个 SSE 节点、报告/Evidence、审核发布和文章打开，桌面/移动布局控制台均为 0 error；
+- 重复审核返回相同 `articleId`，验证幂等发布；
+- Docker offline smoke 验证 Gateway、Agent、7 个 checkpoint、Evidence、取消、点赞投影和缓存失效链路。
 
 ### Phase 2：真实动态工具循环
 
@@ -714,10 +724,10 @@ docs: finalize demo and interview evidence
 | 阶段 | 状态 | 完成条件 |
 |---|---|---|
 | Phase 0 方案收敛 | 已完成 | 本文唯一有效，旧方案删除，引用更新 |
-| Phase 1 Agent 工作台 | 待实施 | 浏览器完整演示当前链路 |
+| Phase 1 Agent 工作台 | 已完成 | 浏览器完整演示当前链路 |
 | Phase 2 动态工具循环 | 待实施 | 模型决策真实工具，预算和恢复通过 |
 | Phase 3 Evidence/Critic | 待实施 | Claim Support 可评测并有补研究 |
 | Phase 4 站内 RAG | 待实施 | 发布内容可被检索，Recall@5 达标 |
 | Phase 5 评测与发布 | 待实施 | 全量验收、真实数据、文档与演示完成 |
 
-后续实施从 **Phase 1：Agent 工作台纵向闭环** 开始。
+后续实施从 **Phase 2：真实动态工具循环** 开始。

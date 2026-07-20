@@ -30,6 +30,8 @@ public class AiReportQueryService {
                 .map(evidence -> evidence.toView()).collect(Collectors.toList()));
         view.setCitations(resultMapper.listCitations(report.getId()).stream()
                 .map(citation -> citation.toView()).collect(Collectors.toList()));
+        view.setUsage(resultMapper.listUsage(report.getRunId()).stream()
+                .map(usage -> usage.toView()).collect(Collectors.toList()));
         return view;
     }
 }

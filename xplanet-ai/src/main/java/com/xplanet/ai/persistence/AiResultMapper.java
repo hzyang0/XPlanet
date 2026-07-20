@@ -68,6 +68,10 @@ public interface AiResultMapper {
             "WHERE c.report_id=#{reportId} ORDER BY c.claim_id, c.evidence_id")
     List<AiCitationRecord> listCitations(@Param("reportId") Long reportId);
 
+    @Select("SELECT node_name, provider, model, input_tokens, output_tokens, estimated_cost, " +
+            "latency_ms, retry_count FROM model_usage WHERE run_id=#{runId} ORDER BY id")
+    List<AiModelUsageRecord> listUsage(@Param("runId") String runId);
+
     @Update("UPDATE ai_task SET status='WAITING_REVIEW', version=version+1, last_error=NULL, update_time=NOW() " +
             "WHERE id=#{taskId} AND current_run_id=#{runId} AND status='RUNNING'")
     int markTaskWaitingReview(@Param("taskId") Long taskId, @Param("runId") String runId);

@@ -1,6 +1,6 @@
 # XPlanet 零基础入门与项目导读
 
-> 本文用于理解当前可运行的 v2 代码。掌握当前链路后，再阅读 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 了解秋招版本为什么优先建设 Research Workspace、真实工具循环、Evidence/Critic、站内 RAG 和可复现评测。
+> 本文用于理解当前可运行的 v2 后端和已完成的 Phase 1 Research Workspace。掌握当前链路后，再阅读 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 了解后续为什么优先建设真实工具循环、Evidence/Critic、站内 RAG 和可复现评测。
 
 > 适合第一次接触 Java 微服务、Redis、RocketMQ 和 Agent 的同学。建议不要一上来逐行读代码，先按本文把系统跑起来，再沿着一条请求追代码。
 
@@ -79,7 +79,7 @@ xplanet/
 ├─ xplanet-agent/                  Python Agent 执行面
 ├─ xplanet-common/                 Java 公共能力
 ├─ xplanet-api/                    跨模块数据契约
-├─ xplanet-web/index.html          无需 Node 的演示页面
+├─ xplanet-web/                    无需 Node 的研究工作台（HTML/CSS/原生 JS）
 ├─ sql/init.sql                    新数据库的完整结构
 ├─ sql/migrations/                 历史数据库增量迁移
 ├─ docker/                         Dockerfile 和 Compose
