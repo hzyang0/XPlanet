@@ -1,5 +1,7 @@
 # XPlanet 零基础入门与项目导读
 
+> 本文用于理解当前可运行的 v2 代码。掌握当前链路后，再阅读 [`XPlanet-Agent-First整体重构方案.md`](XPlanet-Agent-First整体重构方案.md) 了解 v3 为什么转向 Research Thread、真实工具循环、Agent 自有状态和社区知识反馈闭环。
+
 > 适合第一次接触 Java 微服务、Redis、RocketMQ 和 Agent 的同学。建议不要一上来逐行读代码，先按本文把系统跑起来，再沿着一条请求追代码。
 
 ## 1. 先用一句话理解项目

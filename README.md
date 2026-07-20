@@ -2,6 +2,8 @@
 
 > 面向开发者的可追溯研究与社区平台：高并发社区底座、Agent 工作流、人工审核和幂等发布已形成首个可运行闭环。
 
+> **演进说明（2026-07-20）**：当前代码是可运行的 v2 基线；后续将按 [Agent-first v3 总体重构方案](docs/XPlanet-Agent-First整体重构方案.md) 转向以 Research Thread、真实工具循环、并行 Researcher、Evidence Graph、Artifact 和站内知识反馈为中心。目标能力在完成验收前不会描述为已实现。
+
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.18-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

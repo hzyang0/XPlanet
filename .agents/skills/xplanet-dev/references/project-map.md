@@ -104,6 +104,7 @@ Protected write flows require a token from `POST /api/user/login`. Verify the co
 
 ## Reading order by task
 
+- v3 implementation target: `docs/XPlanet-Agent-First整体重构方案.md` is authoritative; the older research optimization plan is historical v1/v2 evidence.
 - Beginner onboarding: `docs/BEGINNER-GUIDE.md` -> Gateway config/filters -> one controller-to-database request flow.
 - Architecture: root `pom.xml` -> module POMs -> `docs/ARCHITECTURE.md` -> application entrypoints and configs.
 - Persistence: `sql/init.sql` -> entity -> mapper/XML -> service transaction boundary.
