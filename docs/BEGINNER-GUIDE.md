@@ -1,6 +1,6 @@
 # XPlanet 零基础入门与项目导读
 
-> 本文用于理解当前可运行的后端、Phase 1 Research Workspace 和 Phase 2 动态工具循环。掌握当前链路后，再阅读 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 了解后续 Evidence/Critic、站内 RAG 和评测收口。
+> 本文用于理解当前可运行的后端，以及 Phase 1～3 的 Research Workspace、动态工具循环和 Claim–Evidence–Critic 质量闭环。掌握当前链路后，再阅读 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 了解后续站内知识检索和评测收口。
 
 > 适合第一次接触 Java 微服务、Redis、RocketMQ 和 Agent 的同学。建议不要一上来逐行读代码，先按本文把系统跑起来，再沿着一条请求追代码。
 
@@ -314,7 +314,8 @@ flowchart TD
     J --> H
     H -->|"finish_research"| K["Writer"]
     K --> L["Critic"]
-    L --> M["Finalize"]
+    L -->|"通过或修订预算耗尽"| M["Finalize"]
+    L -->|"关键证据缺口且未补过"| I
     M --> N["来源/证据/引用/报告事务落库"]
     N --> O["WAITING_REVIEW"]
     O --> P["用户审核"]
@@ -335,10 +336,14 @@ Agent 节点：
 | Planner | 模型生成结构化研究步骤 | plan |
 | Decide Action | 根据计划、现有证据和剩余预算选择下一动作 | action、决策次数 |
 | Execute Tool | 执行 `web_search` 或 `web_fetch` | 工具结果、工具次数、模型用量 |
-| Evidence Builder | 去重来源并把搜索摘要/抓取正文绑定为证据 | sources、evidence |
-| Writer | 根据证据写报告 | title、content、citations |
-| Critic | 检查引用 ID 闭包和覆盖率 | quality score、是否修订 |
+| Evidence Builder | 去重来源，把搜索摘要/抓取正文绑定为证据并计算片段 SHA-256 | sources、evidence |
+| Writer | 输出显式 Claim，且每个 Claim 至少绑定一个已存在 Evidence | title、content、claims、citations |
+| Critic | 结构化检查缺证据、错误引用、冲突与不确定项 | quality score、issues、可选补研究 query |
 | Finalize | 结束机器执行 | 最终 checkpoint |
+
+Critic 不是无限“自我反思”：第一次发现关键缺口时，只有工具预算尚未耗尽才允许执行一次定向 `web_search`；补研究后重写并再审一次，无论结果如何都进入人工审核。这样既保留 Agent 自主修复亮点，也避免成本和循环次数失控。
+
+这里的三层关系要分清：`Source` 是网页身份与整份内容哈希，`Evidence` 是可定位片段及片段哈希，`Claim` 是报告中的明确论点；`Citation` 只负责把 Claim 和 Evidence 连接起来。索引存在不代表事实正确，所以离线词面支持率只作为回归门禁，最终仍保留 Critic 披露和人工审核。
 
 重点源码：
 

@@ -1,6 +1,6 @@
 # 架构与关键设计
 
-> 本文描述当前可运行的后端、秋招版 Phase 1 Research Workspace 和 Phase 2 动态工具循环。后续目标、取舍和实施顺序只以 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 为准。
+> 本文描述当前可运行的后端，以及秋招版 Phase 1～3 的 Research Workspace、动态工具循环和 Claim–Evidence–Critic 质量闭环。后续目标、取舍和实施顺序只以 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 为准。
 
 浏览器端现已从社区单页升级为三栏研究工作台：任务和预算位于左侧，LangGraph/SSE 节点时间线位于中间，来源、Evidence、Citation、模型用量和可编辑报告位于右侧；社区退为审核报告的发布与反馈入口。所有 API 和 SSE 仍只经过 Gateway。
 
@@ -168,7 +168,8 @@ POST /api/ai/tasks
   → Outbox relay 至少一次投递 AI_TASK_REQUESTED
   → xplanet-ai 的 RocketMQ Consumer 以 eventId 写消费 Inbox
   → Consumer 通过带内部 Token 的 HTTP 调用 xplanet-agent
-  → Agent 执行 ValidateInput → Planner → [Decide → Search/Fetch → Evidence] 循环 → Writer → Critic → Finalize
+  → Agent 执行 ValidateInput → Planner → [Decide → Search/Fetch → Evidence] 循环 → Writer(Claim) → Critic
+  → Critic 通过则 Finalize；关键缺口在剩余预算内最多补研究一次，再重写和复核
   → 每个节点把 version + inputHash + checkpoint JSON 幂等写入 MySQL
   → 同时回调 xplanet-ai，把有长度与 TTL 上限的实时进度写入 Redis Stream
   → Agent 返回来源/证据/引用/报告及模型用量
@@ -186,17 +187,18 @@ POST /api/ai/tasks
 - `ai_run_step` 以 `run_id + node_name + input_hash` 幂等保存版本化 checkpoint，允许同一循环节点保存多次不同输入；`EXECUTE_TOOL` 结果先落 checkpoint，MQ 重投再从 `EVIDENCE_BUILDER` 继续，避免重复工具副作用；
 - 每次进入 `RETRYING` 才增加 run attempt，默认第 3 次失败进入 `FAILED`，下一次投递只做 Inbox 确认，避免毒消息无限循环；
 - Agent 将输入/Schema/工具拒绝映射为 400/409/422，Java 对这些确定性错误直接标记失败并确认消息；超时、断连和 5xx 才交给 RocketMQ 重投；
-- 结果落库前检查 `sourceRef`、`evidenceRef` 和 citation 引用闭包，孤立引用不会进入数据库；
+- Evidence 片段独立保存 locator 与 SHA-256；结果落库前检查 `sourceRef`、`evidenceRef`、Claim 和 Citation 闭包，孤立引用或错误哈希不会进入数据库；
+- Writer 必须把 Claim ID 和 Evidence ID 显式写入报告；结构化 Critic 返回缺证据、冲突、错误引用、不确定项和可选补研究 query，工作流硬限制最多一次修订；
 - 模型输出 Token 总量不得超过任务预算，Provider/模型/Token/延迟/重试随结果事务写入 `model_usage`；
 - 报告发布先持久化 `APPROVED`，文章服务暂时失败时可由用户重试；
 - `ai_published_article.report_id` 唯一，重复审核或网络重试返回同一 `article_id`；
 - 默认 Agent 是离线确定性提供器，只证明工作流结构与可靠性，不证明实时搜索或模型答案质量；
-- 可选 `openai-tools`（兼容 `openai-web` 配置名）把 Responses API 的结构化 Planner/Decision/Writer 与 Hosted Web Search 拆开；当前通过 MockTransport 验证契约，未用真实密钥做联网质量验收；
+- 可选 `openai-tools`（兼容 `openai-web` 配置名）把 Responses API 的结构化 Planner/Decision/Writer/Critic 与 Hosted Web Search 拆开；当前通过 MockTransport 验证契约，未用真实密钥做联网质量验收；
 - `web_fetch` 只允许搜索候选 URL，并逐跳限制 HTTP(S)、80/443、公网 DNS、重定向、内容类型、大小和超时；生产环境仍应增加 egress proxy，应用层检查不能完全消除 DNS rebinding 竞态。
 
 ### 5.3 评测与可观测性
 
-- `xplanet-agent/eval/golden_dataset.jsonl` 固定 10 个离线结构案例，CI 运行成功率、引用索引有效率、来源绑定和预算边界评测；`claimSupportRate` 明确留空；
+- `xplanet-agent/eval/golden_dataset.jsonl` 固定 10 个离线案例，CI 评测成功率、引用索引有效率、来源绑定、预算边界和确定性词面 Claim Support；该指标用于回归绑定错误，不等同于语义或事实正确率；
 - `xplanet-ai` 通过 Actuator/Prometheus 暴露 Agent 执行结果与耗时、节点 checkpoint 次数与耗时；
 - `scripts/test-agent-recovery.ps1` 在首个 `EXECUTE_TOOL` checkpoint 成功后一次性强制退出 Agent，再关闭故障开关，验证容器重启、RocketMQ 重投、attempt 增长及工具结果不重复执行；
 - 本阶段指标是本地功能验收证据，不是生产容量或线上质量结论。
@@ -208,7 +210,7 @@ POST /api/ai/tasks
 - 单机 Redis,没起集群/哨兵
 - article 通过 OpenFeign 调 user 服务；Gateway 已生成请求 TraceId，但服务日志/MQ/Feign 的完整上下文透传和熔断仍待完善
 - 没接配置中心 / 注册中心,服务地址写在配置里
-- AI 已完成动态工具循环、应用层 SSRF 防护、checkpoint、故障恢复、基础评测和 Micrometer 指标；真实联网质量、语义引用核验、Prompt 注入防护、网络层 egress 限制和 RAG 尚未完成
+- AI 已完成动态工具循环、应用层 SSRF 防护、Claim–Evidence–Critic、单次补研究、checkpoint、故障恢复、基础评测和 Micrometer 指标；真实联网质量、人工/模型语义抽检、Prompt 注入纵深防护、网络层 egress 限制和站内检索尚未完成
 
 **关于刻意不做的部分**:当前只引入了轻量 Gateway；注册中心、分布式事务和监控全家桶在这个业务规模下收益不足，没有引入。
 缓存一致性也没上 Canal binlog 兜底——社区场景下「双删 + MQ 广播」已足够,binlog 兜底是为不存在的问题加复杂度。
@@ -218,6 +220,6 @@ POST /api/ai/tasks
 
 - 本地混合模式通过 `scripts/setup-infra.ps1` 启动中间件，RocketMQ broker 广播宿主机地址，Java 服务在 IDE 或本机 JVM 中运行；
 - 全 Docker 模式通过 `scripts/start-docker.ps1` 切换 broker 容器地址、执行 Flyway、构建五个 Java 应用和一个 Python Agent 镜像并等待健康；宿主机只暴露 Gateway 8080；
-- `sql/init.sql` 负责新数据卷的当前完整结构，Flyway 对历史数据库建立 V4 baseline，V005 增加 AI 控制面，V006 增加 AI 报告—文章幂等发布投影，V007 增加运行步骤 checkpoint；以后继续追加版本脚本；
+- `sql/init.sql` 负责新数据卷的当前完整结构，Flyway 对历史数据库建立 V4 baseline，V005 增加 AI 控制面，V006 增加 AI 报告—文章幂等发布投影，V007 增加运行步骤 checkpoint，V008 增加 Evidence 片段哈希；以后继续追加版本脚本；
 - 两种模式共用固定 `xplanet-net` 网络，但分别使用 `broker-host.conf` 和 `broker-docker.conf`，避免 broker 把客户端无法访问的地址注册到 NameServer；
-- 当前执行 98 项 Java 测试、22 项 Python Agent 测试和 10 条离线评测；真实 MySQL/Redis/RocketMQ/Gateway/Agent 行为由 `scripts/smoke-test.ps1` 与 `scripts/test-agent-recovery.ps1` 验证。
+- 当前执行 100 项 Java 测试、25 项 Python Agent 测试和 10 条离线评测；真实 MySQL/Redis/RocketMQ/Gateway/Agent 行为由 `scripts/smoke-test.ps1` 与 `scripts/test-agent-recovery.ps1` 验证。

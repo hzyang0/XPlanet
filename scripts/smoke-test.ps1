@@ -172,6 +172,11 @@ if ($aiReport.data.sources.Count -lt 1 -or $aiReport.data.evidence.Count -lt 1 `
     throw "AI 报告缺少来源、证据或引用"
 }
 $evidenceIds = @($aiReport.data.evidence | ForEach-Object { [long]$_.id })
+foreach ($evidence in $aiReport.data.evidence) {
+    if ($evidence.contentHash -notmatch '^[0-9a-f]{64}$') {
+        throw "证据片段缺少可验证 SHA-256：evidenceId=$($evidence.id)"
+    }
+}
 foreach ($citation in $aiReport.data.citations) {
     if ([long]$citation.evidenceId -notin $evidenceIds) {
         throw "报告引用指向未知 evidenceId=$($citation.evidenceId)"
@@ -186,15 +191,15 @@ $decisionCheckpointCount = [long](Invoke-SqlScalar `
     "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND s.node_name='DECIDE_ACTION' AND s.status='COMPLETED';")
 $evidenceCheckpointCount = [long](Invoke-SqlScalar `
     "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND s.node_name='EVIDENCE_BUILDER' AND s.status='COMPLETED';")
-$schemaTwoCheckpointCount = [long](Invoke-SqlScalar `
-    "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND JSON_EXTRACT(s.checkpoint_json,'$.schemaVersion')=2;")
+$schemaThreeCheckpointCount = [long](Invoke-SqlScalar `
+    "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND JSON_EXTRACT(s.checkpoint_json,'$.schemaVersion')=3;")
 $expectedCheckpointCount = 6 + 3 * $toolCheckpointCount
 if ($toolCheckpointCount -lt 1 -or $toolCheckpointCount -gt 5 `
         -or $decisionCheckpointCount -ne $toolCheckpointCount + 1 `
         -or $evidenceCheckpointCount -ne $toolCheckpointCount `
         -or $checkpointCount -ne $expectedCheckpointCount `
-        -or $schemaTwoCheckpointCount -ne $checkpointCount) {
-    throw "Agent 动态 checkpoint 不完整：all=$checkpointCount, tools=$toolCheckpointCount, decisions=$decisionCheckpointCount, evidence=$evidenceCheckpointCount, schema2=$schemaTwoCheckpointCount"
+        -or $schemaThreeCheckpointCount -ne $checkpointCount) {
+    throw "Agent 动态 checkpoint 不完整：all=$checkpointCount, tools=$toolCheckpointCount, decisions=$decisionCheckpointCount, evidence=$evidenceCheckpointCount, schema3=$schemaThreeCheckpointCount"
 }
 if ($progressEventCount -lt $checkpointCount) {
     throw "Agent 进度事件不完整，events=$progressEventCount, checkpoints=$checkpointCount"

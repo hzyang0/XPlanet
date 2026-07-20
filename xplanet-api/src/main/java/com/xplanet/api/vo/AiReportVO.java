@@ -40,6 +40,7 @@ public class AiReportVO {
         private Long sourceId;
         private String locator;
         private String content;
+        private String contentHash;
         private Double score;
     }
 

@@ -14,9 +14,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -123,6 +127,7 @@ public class AiResultPersistenceService {
             record.setSourceId(sourceId);
             record.setLocator(item.getLocator() == null ? "" : item.getLocator());
             record.setContent(item.getContent());
+            record.setContentHash(item.getContentHash());
             record.setScore(item.getScore());
             if (resultMapper.insertEvidence(record) != 1 || record.getId() == null) {
                 throw new IllegalStateException("failed to persist evidence");
@@ -152,8 +157,8 @@ public class AiResultPersistenceService {
                 || result.getEvidence().size() > task.getMaxToolCalls() * 5
                 // A dynamic Agent can make one planner call, up to one decision and one
                 // search-model call per tool action, then one final decision and up to
-                // two writer calls (single bounded revision).
-                || result.getUsage().size() > task.getMaxToolCalls() * 2 + 4) {
+                // two writer/critic pairs (single bounded repair).
+                || result.getUsage().size() > task.getMaxToolCalls() * 2 + 6) {
             throw new IllegalArgumentException("AI result exceeds task bounds");
         }
         Set<String> sourceRefs = new HashSet<>();
@@ -173,6 +178,9 @@ public class AiResultPersistenceService {
             if (item.getEvidenceRef() == null || !evidenceRefs.add(item.getEvidenceRef())
                     || !sourceRefs.contains(item.getSourceRef()) || item.getContent() == null
                     || item.getContent().isBlank() || item.getContent().length() > 50000
+                    || item.getContentHash() == null
+                    || !item.getContentHash().matches("[0-9a-fA-F]{64}")
+                    || !sha256(item.getContent()).equalsIgnoreCase(item.getContentHash())
                     || item.getScore() == null || item.getScore() < 0 || item.getScore() > 1) {
                 throw new IllegalArgumentException("invalid evidence identity or source binding");
             }
@@ -208,6 +216,15 @@ public class AiResultPersistenceService {
             if (totalOutputTokens > task.getMaxTokens()) {
                 throw new IllegalArgumentException("model usage exceeds output token budget");
             }
+        }
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
         }
     }
 }

@@ -69,10 +69,40 @@ class ToolExecutionResult(BaseModel):
     usage: list["ModelUsageResult"] = Field(default_factory=list)
 
 
+class ClaimDraft(BaseModel):
+    claimId: str = Field(pattern=r"^claim-[a-zA-Z0-9_-]+$", max_length=64)
+    statement: str = Field(min_length=1, max_length=4000)
+    evidenceRefs: list[str] = Field(min_length=1, max_length=5)
+    confidence: float = Field(ge=0, le=1)
+
+
 class WriterDraft(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1, max_length=100_000)
-    citations: list["CitationResult"] = Field(default_factory=list)
+    claims: list[ClaimDraft] = Field(min_length=1, max_length=50)
+
+
+class CriticIssue(BaseModel):
+    issueType: Literal[
+        "missing_evidence",
+        "conflicting_evidence",
+        "incorrect_citation",
+        "unsupported_claim",
+    ]
+    claimId: str | None = Field(default=None, max_length=64)
+    evidenceRefs: list[str] = Field(default_factory=list, max_length=5)
+    detail: str = Field(min_length=1, max_length=1000)
+    suggestedQuery: str | None = Field(default=None, max_length=300)
+
+
+class CriticReview(BaseModel):
+    approved: bool
+    qualityScore: float = Field(ge=0, le=1)
+    claimSupportScore: float = Field(ge=0, le=1)
+    issues: list[CriticIssue] = Field(default_factory=list, max_length=20)
+    uncertainties: list[str] = Field(default_factory=list, max_length=20)
+    conflicts: list[str] = Field(default_factory=list, max_length=20)
+    supplementalQuery: str | None = Field(default=None, max_length=300)
 
 
 class SourceResult(BaseModel):
@@ -89,6 +119,7 @@ class EvidenceResult(BaseModel):
     sourceRef: str
     locator: str
     content: str
+    contentHash: str = Field(pattern=r"^[0-9a-f]{64}$")
     score: float = Field(ge=0, le=1)
 
 

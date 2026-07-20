@@ -12,6 +12,8 @@ from langgraph.graph import END, START, StateGraph
 
 from .models import (
     CitationResult,
+    ClaimDraft,
+    CriticReview,
     EvidenceResult,
     FetchedDocument,
     ModelUsageResult,
@@ -25,6 +27,7 @@ from .models import (
 )
 from .progress import NullProgressSink, ProgressSink
 from .providers import ModelProvider, OfflineModelProvider, OfflineSearchProvider, SearchProvider
+from .quality import lexical_support_score
 from .tools import DocumentFetcher, OfflineDocumentFetcher, ToolRegistry
 
 
@@ -50,13 +53,19 @@ class ResearchState(TypedDict, total=False):
     research_complete: bool
     sources: list[SourceResult]
     evidence: list[EvidenceResult]
+    claims: list[ClaimDraft]
     citations: list[CitationResult]
+    critic_review: CriticReview
     title: str
     content: str
     quality_score: float
     revisions: int
     tool_calls: int
     needs_revision: bool
+    critic_next: str
+    evidence_next: str
+    supplemental_count: int
+    supplemental_pending: bool
     provider_name: str
     usage: list[ModelUsageResult]
 
@@ -94,7 +103,7 @@ class ResearchWorkflow:
         builder.add_edge("planner", "decide_action")
         builder.add_conditional_edges("decide_action", self._after_decision)
         builder.add_edge("execute_tool", "evidence_builder")
-        builder.add_edge("evidence_builder", "decide_action")
+        builder.add_conditional_edges("evidence_builder", self._after_evidence)
         builder.add_edge("writer", "critic")
         builder.add_conditional_edges("critic", self._after_critic)
         builder.add_edge("finalize", END)
@@ -117,10 +126,15 @@ class ResearchWorkflow:
             "research_complete": False,
             "sources": [],
             "evidence": [],
+            "claims": [],
             "citations": [],
             "revisions": 0,
             "tool_calls": 0,
             "needs_revision": False,
+            "critic_next": "finalize",
+            "evidence_next": "decide_action",
+            "supplemental_count": 0,
+            "supplemental_pending": False,
             "provider_name": self.provider_name,
             "usage": [],
         }
@@ -354,14 +368,17 @@ class ResearchWorkflow:
         sources, evidence = self._materialize_evidence(state["command"], search_hits, documents)
         if not evidence:
             raise ValueError("tool result did not produce usable evidence")
+        next_node = "writer" if state.get("supplemental_pending", False) else "decide_action"
         updates: ResearchState = {
             "search_hits": search_hits,
             "documents": documents,
             "sources": sources,
             "evidence": evidence,
             "tool_result": None,
+            "supplemental_pending": False,
+            "evidence_next": next_node,
         }
-        self._checkpoint(state, "EVIDENCE_BUILDER", updates, "decide_action", started)
+        self._checkpoint(state, "EVIDENCE_BUILDER", updates, next_node, started)
         state["sink"].emit(
             "EVIDENCE_ADDED",
             "COMPLETED",
@@ -369,6 +386,10 @@ class ResearchWorkflow:
             self._loop_progress(state, 3),
         )
         return updates
+
+    @staticmethod
+    def _after_evidence(state: ResearchState) -> Literal["decide_action", "writer"]:
+        return "writer" if state.get("evidence_next") == "writer" else "decide_action"
 
     @staticmethod
     def _merge_hits(existing: list[SearchHit], additions: list[SearchHit]) -> list[SearchHit]:
@@ -443,6 +464,7 @@ class ResearchWorkflow:
                     sourceRef=source_ref,
                     locator="fetched document" if document else "web search snippet",
                     content=content[:4000],
+                    contentHash=hashlib.sha256(content[:4000].encode("utf-8")).hexdigest(),
                     score=0.88 if document else 0.55,
                 )
             )
@@ -461,43 +483,170 @@ class ResearchWorkflow:
             state["plan"],
             state["sources"],
             state["evidence"],
+            state.get("critic_review"),
         )
-        evidence_ids = {item.evidenceRef for item in state["evidence"]}
-        citation_ids = {item.evidenceRef for item in draft.citations}
-        if not draft.citations or not citation_ids.issubset(evidence_ids):
-            raise ValueError("writer returned an unknown or empty evidence citation")
+        citations = self._validate_claims_and_build_citations(
+            draft.claims,
+            state["evidence"],
+            draft.content,
+        )
         updates: ResearchState = {
             "title": draft.title,
             "content": draft.content,
-            "citations": draft.citations,
+            "claims": draft.claims,
+            "citations": citations,
         }
         if usage is not None:
             updates["usage"] = self._append_usage(state, usage)
         self._checkpoint(state, "WRITER", updates, "critic", started)
-        state["sink"].emit("WRITER", "COMPLETED", "生成仅引用已保存 evidenceRef 的报告草稿", 86)
+        state["sink"].emit(
+            "WRITER",
+            "COMPLETED",
+            f"生成 {len(draft.claims)} 个显式 Claim 及其证据绑定",
+            86,
+        )
         return updates
+
+    @staticmethod
+    def _validate_claims_and_build_citations(
+        claims: list[ClaimDraft],
+        evidence: list[EvidenceResult],
+        content: str,
+    ) -> list[CitationResult]:
+        evidence_by_ref = {item.evidenceRef: item for item in evidence}
+        claim_ids = set()
+        citations = []
+        for claim in claims:
+            if claim.claimId in claim_ids:
+                raise ValueError("writer returned a duplicate claim identity")
+            claim_ids.add(claim.claimId)
+            if claim.claimId not in content:
+                raise ValueError("writer report does not expose its claim identity")
+            for evidence_ref in dict.fromkeys(claim.evidenceRefs):
+                item = evidence_by_ref.get(evidence_ref)
+                if item is None:
+                    raise ValueError("writer returned an unknown evidence citation")
+                if evidence_ref not in content:
+                    raise ValueError("writer report does not expose its evidence citation")
+                citations.append(
+                    CitationResult(
+                        claimId=claim.claimId,
+                        evidenceRef=evidence_ref,
+                        supportScore=lexical_support_score(claim.statement, item.content),
+                    )
+                )
+        if not citations:
+            raise ValueError("writer returned no claim-evidence citation")
+        return citations
 
     def _critic(self, state: ResearchState) -> ResearchState:
         started = time.monotonic()
         self._guard(state)
-        evidence_ids = {item.evidenceRef for item in state["evidence"]}
-        citation_ids = {item.evidenceRef for item in state["citations"]}
-        coverage = len(citation_ids & evidence_ids) / max(1, len(evidence_ids))
-        valid = bool(citation_ids) and citation_ids.issubset(evidence_ids)
-        score = min(1.0, 0.65 + coverage * 0.3 + (0.05 if valid else 0.0))
-        should_revise = score < 0.8 and state.get("revisions", 0) < 1
+        review, usage = self._model.critic(
+            self._command_with_remaining_tokens(state),
+            state["question"],
+            state["claims"],
+            state["evidence"],
+        )
+        self._validate_critic_review(review, state["claims"], state["evidence"])
+        score = round(
+            min(review.qualityScore, 0.4 * review.qualityScore + 0.6 * review.claimSupportScore),
+            4,
+        )
+        needs_repair = not review.approved or bool(review.issues)
+        query = (review.supplementalQuery or "").strip()
+        can_supplement = (
+            needs_repair
+            and bool(query)
+            and state.get("supplemental_count", 0) < 1
+            and state.get("tool_calls", 0) < state["command"].maxToolCalls
+            and query not in state.get("attempted_queries", [])
+        )
+        can_rewrite = needs_repair and state.get("revisions", 0) < 1
+        next_node = "finalize"
         updates: ResearchState = {
             "quality_score": score,
-            "needs_revision": should_revise,
-            "revisions": state.get("revisions", 0) + (1 if should_revise else 0),
+            "critic_review": review,
+            "needs_revision": False,
+            "critic_next": "finalize",
         }
-        next_node = "writer" if should_revise else "finalize"
+        if usage is not None:
+            updates["usage"] = self._append_usage(state, usage)
+        if can_supplement:
+            updates.update(
+                {
+                    "action": ToolAction(
+                        name="web_search",
+                        query=query,
+                        reason="Critic 发现关键论点证据不足，执行唯一一次定向补研究",
+                    ),
+                    "supplemental_count": state.get("supplemental_count", 0) + 1,
+                    "supplemental_pending": True,
+                    "revisions": state.get("revisions", 0) + 1,
+                    "needs_revision": True,
+                    "critic_next": "execute_tool",
+                }
+            )
+            next_node = "execute_tool"
+        elif can_rewrite:
+            updates.update(
+                {
+                    "revisions": state.get("revisions", 0) + 1,
+                    "needs_revision": True,
+                    "critic_next": "writer",
+                }
+            )
+            next_node = "writer"
+        else:
+            updates["content"] = self._append_critic_disclosure(state["content"], review)
         self._checkpoint(state, "CRITIC", updates, next_node, started)
-        state["sink"].emit("CRITIC", "COMPLETED", f"引用索引有效，覆盖率 {coverage:.0%}", 95)
+        state["sink"].emit(
+            "CRITIC",
+            "COMPLETED",
+            f"Claim 支持率 {review.claimSupportScore:.0%}，问题 {len(review.issues)} 项，下一步 {next_node}",
+            95 if next_node == "finalize" else 88,
+        )
         return updates
 
-    def _after_critic(self, state: ResearchState) -> Literal["writer", "finalize"]:
-        return "writer" if state.get("needs_revision", False) else "finalize"
+    @staticmethod
+    def _validate_critic_review(
+        review: CriticReview,
+        claims: list[ClaimDraft],
+        evidence: list[EvidenceResult],
+    ) -> None:
+        claim_ids = {item.claimId for item in claims}
+        evidence_ids = {item.evidenceRef for item in evidence}
+        for issue in review.issues:
+            if issue.claimId is not None and issue.claimId not in claim_ids:
+                raise ValueError("critic referenced an unknown claim")
+            if not set(issue.evidenceRefs).issubset(evidence_ids):
+                raise ValueError("critic referenced unknown evidence")
+
+    @staticmethod
+    def _append_critic_disclosure(content: str, review: CriticReview) -> str:
+        uncertainty = review.uncertainties or ["未发现需要额外披露的不确定项。"]
+        conflicts = review.conflicts or ["未发现来源间的直接冲突。"]
+        unresolved = [item.detail for item in review.issues] or ["无未解决的结构化 Critic 问题。"]
+        return (
+            content.rstrip()
+            + "\n\n## Critic 质量审计\n\n"
+            + f"- Claim 支持率：{review.claimSupportScore:.0%}\n"
+            + f"- 综合质量分：{review.qualityScore:.2f}\n"
+            + "- 不确定项："
+            + "；".join(uncertainty)
+            + "\n- 冲突："
+            + "；".join(conflicts)
+            + "\n- 未解决问题："
+            + "；".join(unresolved)
+        )
+
+    def _after_critic(
+        self, state: ResearchState
+    ) -> Literal["execute_tool", "writer", "finalize"]:
+        target = state.get("critic_next", "finalize")
+        if target not in {"execute_tool", "writer", "finalize"}:
+            raise ValueError(f"unsupported critic route: {target}")
+        return target  # type: ignore[return-value]
 
     def _finalize(self, state: ResearchState) -> ResearchState:
         started = time.monotonic()
@@ -551,7 +700,7 @@ class ResearchWorkflow:
         next_node: str,
     ) -> str:
         payload: dict[str, Any] = {
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "commandHash": state["command_hash"],
             "completedNode": completed_node,
             "nextNode": next_node,
@@ -568,13 +717,21 @@ class ResearchWorkflow:
             "researchComplete": state.get("research_complete", False),
             "sources": [item.model_dump() for item in state.get("sources", [])],
             "evidence": [item.model_dump() for item in state.get("evidence", [])],
+            "claims": [item.model_dump() for item in state.get("claims", [])],
             "citations": [item.model_dump() for item in state.get("citations", [])],
+            "criticReview": (
+                state["critic_review"].model_dump() if state.get("critic_review") else None
+            ),
             "title": state.get("title"),
             "content": state.get("content"),
             "qualityScore": state.get("quality_score"),
             "revisions": state.get("revisions", 0),
             "toolCalls": state.get("tool_calls", 0),
             "needsRevision": state.get("needs_revision", False),
+            "criticNext": state.get("critic_next", "finalize"),
+            "evidenceNext": state.get("evidence_next", "decide_action"),
+            "supplementalCount": state.get("supplemental_count", 0),
+            "supplementalPending": state.get("supplemental_pending", False),
             "providerName": state.get("provider_name", self.provider_name),
             "usage": [item.model_dump() for item in state.get("usage", [])],
         }
@@ -590,11 +747,15 @@ class ResearchWorkflow:
         schema_version = payload.get("schemaVersion")
         if schema_version == 1:
             return self._restore_legacy_checkpoint(payload, command_hash)
-        if schema_version != 2:
+        if schema_version not in {2, 3}:
             raise ValueError("unsupported checkpoint schema version")
         target = payload.get("nextNode")
         if not isinstance(target, str):
             raise ValueError("checkpoint has no resume target")
+        if schema_version == 2 and target in {"critic", "finalize"}:
+            # Phase 2 drafts had citations but no explicit Claim objects or structured review.
+            # Re-enter the writer so a resumed run cannot bypass the new quality contract.
+            target = "writer"
         restored: ResearchState = {
             "resume_target": target,
             "deadline_at": float(payload["deadlineAt"]),
@@ -608,15 +769,18 @@ class ResearchWorkflow:
             "decision_count": int(payload.get("decisionCount") or 0),
             "research_complete": bool(payload.get("researchComplete")),
             "sources": [SourceResult.model_validate(item) for item in payload.get("sources") or []],
-            "evidence": [
-                EvidenceResult.model_validate(item) for item in payload.get("evidence") or []
-            ],
+            "evidence": self._restore_evidence(payload.get("evidence") or []),
+            "claims": [ClaimDraft.model_validate(item) for item in payload.get("claims") or []],
             "citations": [
                 CitationResult.model_validate(item) for item in payload.get("citations") or []
             ],
             "revisions": int(payload.get("revisions") or 0),
             "tool_calls": int(payload.get("toolCalls") or 0),
             "needs_revision": bool(payload.get("needsRevision")),
+            "critic_next": payload.get("criticNext") or "finalize",
+            "evidence_next": payload.get("evidenceNext") or "decide_action",
+            "supplemental_count": int(payload.get("supplementalCount") or 0),
+            "supplemental_pending": bool(payload.get("supplementalPending")),
             "provider_name": payload.get("providerName") or self.provider_name,
             "usage": [ModelUsageResult.model_validate(item) for item in payload.get("usage") or []],
         }
@@ -624,6 +788,7 @@ class ResearchWorkflow:
             "plan": ("plan", ResearchPlan),
             "action": ("action", ToolAction),
             "toolResult": ("tool_result", ToolExecutionResult),
+            "criticReview": ("critic_review", CriticReview),
         }
         for source_name, (state_name, model) in typed_fields.items():
             value = payload.get(source_name)
@@ -639,6 +804,16 @@ class ResearchWorkflow:
             value = payload.get(source_name)
             if value is not None:
                 restored[state_name] = value  # type: ignore[literal-required]
+        return restored
+
+    @staticmethod
+    def _restore_evidence(items: list[dict[str, Any]]) -> list[EvidenceResult]:
+        restored = []
+        for raw in items:
+            value = dict(raw)
+            if not value.get("contentHash") and isinstance(value.get("content"), str):
+                value["contentHash"] = hashlib.sha256(value["content"].encode("utf-8")).hexdigest()
+            restored.append(EvidenceResult.model_validate(value))
         return restored
 
     def _restore_legacy_checkpoint(
@@ -658,10 +833,15 @@ class ResearchWorkflow:
             "research_complete": False,
             "sources": [],
             "evidence": [],
+            "claims": [],
             "citations": [],
             "revisions": 0,
             "tool_calls": 0,
             "needs_revision": False,
+            "critic_next": "finalize",
+            "evidence_next": "decide_action",
+            "supplemental_count": 0,
+            "supplemental_pending": False,
             "provider_name": self.provider_name,
             "usage": [],
         }

@@ -2,7 +2,7 @@
 
 本文只记录实际执行过的验证及其边界。所有耗时均为本地快照，不代表生产容量或线上 SLA。
 
-## 2026-07-20：动态 Agent 离线结构评测
+## 2026-07-20：动态 Agent 与 Claim Support 离线评测
 
 ### 条件
 
@@ -22,11 +22,13 @@
 | Dataset Size | 10 | 本轮固定案例数量 |
 | Task Success Rate | 100% | 工作流完成，来源/证据数量未越界 |
 | Citation Index Validity Rate | 100% | citation 引用的 `evidenceRef` 均存在 |
-| Claim Support Rate | 未测量 | 不能据此声称证据在语义或事实上支持结论 |
-| Average Latency | 14.257 ms | 当前机器上含动态决策/工具循环的离线图执行快照 |
-| P95 Latency | 18.011 ms | 当前机器上含动态决策/工具循环的离线图执行快照 |
+| Claim Support Rate | 100% | 每个 Claim 至少有一个 citation 的确定性词面支持分不低于 0.55 |
+| Average Latency | 16.511 ms | 当前机器上含动态循环、Writer 和 Critic 的离线图执行快照 |
+| P95 Latency | 19.951 ms | 当前机器上含动态循环、Writer 和 Critic 的离线图执行快照 |
 
-限制：数据集规模小且资料固定，只用于防止编排、预算和引用 ID 闭包回归。真实网页质量、事实正确率、模型成本、网络延迟和 Prompt 注入未被这组数字覆盖。
+限制：数据集规模小，离线 Writer 直接使用固定证据内容形成 Claim，因此 100% 只用于防止编排、预算、错误引用和明显词面不支持回归，不是语义 Judge 分数或事实正确率。真实网页质量、模型成本、网络延迟和 Prompt 注入未被这组数字覆盖。
+
+Python 共 25 项测试，新增覆盖 Evidence 片段 SHA-256、Claim 缺证据、未知 Evidence 引用、结构化冲突披露，以及 Critic 最多一次定向补研究后强制收敛。Java 结果落库测试同时验证片段哈希契约、引用写入失败不会推进任务状态，`complete` 方法的事务边界保证真实数据库写入整体回滚。
 
 ## 2026-07-20：工具 checkpoint 崩溃恢复
 
@@ -46,7 +48,7 @@
 
 | 证据 | 本次结果 |
 |---|---:|
-| Task ID | 34 |
+| Task ID | 47 |
 | Completed Checkpoint Steps | 15 |
 | Completed Tool Steps | 3（等于任务预算，无额外重复） |
 | Run Attempts | 2 |
@@ -73,13 +75,13 @@
 | 无 Token 写请求 | HTTP 401 / 业务码 2001 |
 | 请求与响应 `X-Trace-Id` | 通过 |
 | 文章、缓存 Outbox、点赞幂等和持久化计数 | 通过 |
-| AI 动态循环 | 5 次工具、6 次决策、21 个 schema v2 checkpoint、26 条 SSE 进度 |
-| 证据闭包、审核和幂等发布 | 通过，Task ID 31，发布 Article ID 113 |
+| AI 动态循环 | 5 次工具、6 次决策、21 个 schema v3 checkpoint、26 条 SSE 进度 |
+| Claim/Evidence/Critic、片段哈希、审核和幂等发布 | 通过，Task ID 48，发布 Article ID 120 |
 
 此结果证明本机这套 Compose 中组件可以协同工作，不代表生产高可用、安全攻防或容量结论。Gateway 当前完成入口级 TraceId；服务日志 MDC、Feign 和 MQ 的完整 Trace 上下文仍是后续项。
 
 ## 可选 OpenAI Tools Provider
 
-`openai-tools`（兼容旧环境值 `openai-web`）已通过 `httpx.MockTransport` 覆盖结构化 Planner、动态 Decision、Writer、单次 Hosted Web Search、内部鉴权头、来源/工具/Token 边界以及用量返回。`HttpDocumentFetcher` 单测覆盖私网 DNS、私网重定向、危险端口、二进制内容和超大响应。当前环境没有真实 API Key，也没有产生外部模型费用，因此不记录真实联网质量、成本或延迟数字。
+`openai-tools`（兼容旧环境值 `openai-web`）已通过 `httpx.MockTransport` 覆盖结构化 Planner、动态 Decision、Writer、Critic、单次 Hosted Web Search、内部鉴权头、来源/工具/Token 边界以及用量返回。`HttpDocumentFetcher` 单测覆盖私网 DNS、私网重定向、危险端口、二进制内容和超大响应。当前环境没有真实 API Key，也没有产生外部模型费用，因此不记录真实联网质量、成本或延迟数字。
 
 启用前应单独建立经批准的在线数据集，记录 Provider/模型、Prompt 版本、完整费用、限流与错误分布，并增加 Claim—Evidence 语义支持验证。

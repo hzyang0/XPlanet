@@ -12,11 +12,16 @@ import org.junit.jupiter.api.Test;
 
 import java.time.OffsetDateTime;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -109,6 +114,52 @@ class AiResultPersistenceServiceTest {
     }
 
     @Test
+    void shouldRejectEvidenceWithoutVerifiableContentHash() {
+        AiResearchResult invalid = result();
+        invalid.getEvidence().get(0).setContentHash("c".repeat(64));
+        when(resultMapper.insertInbox(AiResultPersistenceService.CONSUMER, "event-1")).thenReturn(1);
+        when(taskMapper.findInternalForUpdate(1L)).thenReturn(task("RUNNING"));
+
+        assertThatThrownBy(() -> service.complete("event-1", invalid))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("invalid evidence identity or source binding");
+
+        verify(resultMapper, never()).insertSource(any());
+    }
+
+    @Test
+    void shouldAbortTransactionalCompletionWhenCitationPersistenceFails() throws Exception {
+        assertThat(AiResultPersistenceService.class.getMethod(
+                "complete", String.class, AiResearchResult.class).isAnnotationPresent(
+                org.springframework.transaction.annotation.Transactional.class)).isTrue();
+        when(resultMapper.insertInbox(AiResultPersistenceService.CONSUMER, "event-1")).thenReturn(1);
+        when(taskMapper.findInternalForUpdate(1L)).thenReturn(task("RUNNING"));
+        doAnswer(invocation -> {
+            AiSourceRecord record = invocation.getArgument(0);
+            record.setId(10L);
+            return 1;
+        }).when(resultMapper).insertSource(any(AiSourceRecord.class));
+        doAnswer(invocation -> {
+            AiEvidenceRecord record = invocation.getArgument(0);
+            record.setId(20L);
+            return 1;
+        }).when(resultMapper).insertEvidence(any(AiEvidenceRecord.class));
+        doAnswer(invocation -> {
+            AiReportRecord record = invocation.getArgument(0);
+            record.setId(30L);
+            return 1;
+        }).when(resultMapper).insertReport(any(AiReportRecord.class));
+        when(resultMapper.insertCitation(30L, "claim-1", 20L, 0.9)).thenReturn(0);
+
+        assertThatThrownBy(() -> service.complete("event-1", result()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("citation references unknown evidence");
+
+        verify(resultMapper, never()).markTaskWaitingReview(anyLong(), anyString());
+        verify(resultMapper, never()).markRunWaitingReview(anyLong(), anyString());
+    }
+
+    @Test
     void shouldRejectModelUsageBeyondTaskOutputTokenBudget() {
         AiResearchResult invalid = result();
         invalid.getUsage().get(0).setOutputTokens(8_001);
@@ -125,7 +176,7 @@ class AiResultPersistenceServiceTest {
     @Test
     void shouldRejectModelCallRecordsBeyondDynamicAgentBound() {
         AiResearchResult invalid = result();
-        invalid.setUsage(new ArrayList<>(Collections.nCopies(7, invalid.getUsage().get(0))));
+        invalid.setUsage(new ArrayList<>(Collections.nCopies(9, invalid.getUsage().get(0))));
         AiTaskRecord constrained = task("RUNNING");
         constrained.setMaxToolCalls(1);
         when(resultMapper.insertInbox(AiResultPersistenceService.CONSUMER, "event-1")).thenReturn(1);
@@ -154,7 +205,7 @@ class AiResultPersistenceServiceTest {
                 "src-1", "https://example.com/source", "Source",
                 "a".repeat(64), OffsetDateTime.now().toString(), "{}");
         AiResearchResult.Evidence evidence = new AiResearchResult.Evidence(
-                "ev-1", "src-1", "section 1", "supporting evidence", 0.9);
+                "ev-1", "src-1", "section 1", "supporting evidence", sha256("supporting evidence"), 0.9);
         AiResearchResult.Citation citation = new AiResearchResult.Citation("claim-1", "ev-1", 0.9);
         AiResearchResult.Usage usage = new AiResearchResult.Usage(
                 "EXECUTE_TOOL", "openai", "test-model", 120, 80,
@@ -165,5 +216,14 @@ class AiResultPersistenceServiceTest {
                 .sources(List.of(source)).evidence(List.of(evidence)).citations(List.of(citation))
                 .usage(List.of(usage))
                 .build();
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 }

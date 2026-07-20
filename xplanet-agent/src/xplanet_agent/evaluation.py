@@ -47,6 +47,14 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
             source_refs = {source.sourceRef for source in report.sources}
             evidence_refs = {item.evidenceRef for item in report.evidence}
             cited_refs = {item.evidenceRef for item in report.citations}
+            claim_scores: dict[str, float] = {}
+            for citation in report.citations:
+                claim_scores[citation.claimId] = max(
+                    claim_scores.get(citation.claimId, 0.0), citation.supportScore
+                )
+            claim_support_rate = sum(score >= 0.55 for score in claim_scores.values()) / max(
+                1, len(claim_scores)
+            )
             citation_index_valid = cited_refs.issubset(evidence_refs)
             evidence_source_valid = all(
                 item.sourceRef in source_refs for item in report.evidence
@@ -56,7 +64,13 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
                 len(report.sources) <= command.maxSources
                 and len(report.sources) >= case.get("minSources", 1)
             )
-            success = citation_index_valid and evidence_source_valid and bounded
+            expected_claim_support = case.get("minClaimSupportRate", 1.0)
+            success = (
+                citation_index_valid
+                and evidence_source_valid
+                and bounded
+                and claim_support_rate >= expected_claim_support
+            )
             result = {
                 "id": case["id"],
                 "success": success,
@@ -65,6 +79,8 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
                 "citationIndexValid": citation_index_valid,
                 "evidenceSourceValid": evidence_source_valid,
                 "citationCoverage": round(citation_coverage, 4),
+                "claimCount": len(claim_scores),
+                "claimSupportRate": round(claim_support_rate, 4),
                 "structuralQualityScore": report.qualityScore,
             }
         except Exception as exc:
@@ -78,13 +94,15 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
     p95_index = max(0, math.ceil(len(ordered) * 0.95) - 1)
     successful = [item for item in results if item["success"]]
     citation_valid = [item for item in results if item.get("citationIndexValid")]
+    measured_support = [item["claimSupportRate"] for item in results if "claimSupportRate" in item]
     return {
         "provider": "offline-demo",
         "datasetSize": len(results),
         "successRate": round(len(successful) / len(results), 4),
         "citationIndexValidityRate": round(len(citation_valid) / len(results), 4),
-        "claimSupportRate": None,
-        "claimSupportRateNote": "not measured; index validity is not factual support",
+        "claimSupportRate": round(sum(measured_support) / max(1, len(measured_support)), 4),
+        "claimSupportThreshold": 0.55,
+        "claimSupportMethod": "deterministic lexical guardrail; live semantic samples require human audit",
         "averageLatencyMs": round(sum(latencies) / len(latencies), 3),
         "p95LatencyMs": round(ordered[p95_index], 3),
         "cases": results,

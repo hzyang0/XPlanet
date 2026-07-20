@@ -1,6 +1,16 @@
 import pytest
 
-from xplanet_agent.models import SearchHit, TaskCommand, ToolAction, ToolExecutionResult
+from pydantic import ValidationError
+
+from xplanet_agent.models import (
+    ClaimDraft,
+    CriticIssue,
+    CriticReview,
+    SearchHit,
+    TaskCommand,
+    ToolAction,
+    ToolExecutionResult,
+)
 from xplanet_agent.providers import OfflineModelProvider
 from xplanet_agent.workflow import ResearchWorkflow, TaskCancelled
 
@@ -54,7 +64,10 @@ def test_workflow_produces_traceable_report_with_bounded_sources() -> None:
     assert result.provider == "offline-demo"
     assert len(result.sources) == 2
     assert len(result.evidence) == 2
+    assert all(len(item.contentHash) == 64 for item in result.evidence)
     assert {c.evidenceRef for c in result.citations} == {e.evidenceRef for e in result.evidence}
+    assert all(c.claimId in result.content for c in result.citations)
+    assert "Critic 质量审计" in result.content
     assert all(e.sourceRef in {s.sourceRef for s in result.sources} for e in result.evidence)
     assert result.qualityScore >= 0.8
     assert sink.events[-1] == ("FINALIZE", "COMPLETED", 100)
@@ -167,3 +180,78 @@ def test_workflow_deduplicates_search_urls_before_persisting_sources() -> None:
 
     assert [source.url for source in result.sources] == ["https://example.com/one"]
     assert len(result.evidence) == 1
+
+
+class OneSupplementProvider(OfflineModelProvider):
+    def __init__(self) -> None:
+        self.critic_calls = 0
+
+    def decide(self, command, question, plan, search_hits, documents, attempted_queries, attempted_urls, tool_calls):
+        if tool_calls == 0:
+            return ToolAction(name="web_search", query=plan.steps[0].searchQuery, reason="initial"), None
+        return ToolAction(name="finish_research", reason="critic decides whether more is needed"), None
+
+    def critic(self, command, question, claims, evidence):
+        self.critic_calls += 1
+        if self.critic_calls == 1:
+            return CriticReview(
+                approved=False,
+                qualityScore=0.45,
+                claimSupportScore=0.5,
+                issues=[
+                    CriticIssue(
+                        issueType="conflicting_evidence",
+                        claimId=claims[0].claimId,
+                        evidenceRefs=[claims[0].evidenceRefs[0]],
+                        detail="来源结论存在冲突，需要补充独立来源",
+                        suggestedQuery="independent source for agent checkpoint durability",
+                    )
+                ],
+                uncertainties=["当前结论只有单一来源。"],
+                conflicts=["来源结论存在冲突，需要人工复核。"],
+                supplementalQuery="independent source for agent checkpoint durability",
+            ), None
+        return super().critic(command, question, claims, evidence)
+
+
+def test_critic_can_trigger_only_one_targeted_supplement_then_finalize() -> None:
+    sink = RecordingSink()
+    provider = OneSupplementProvider()
+
+    result = ResearchWorkflow(model_provider=provider).run(
+        command(maxSources=2, maxToolCalls=2), sink
+    )
+
+    assert provider.critic_calls == 2
+    assert sink.saved_nodes.count("CRITIC") == 2
+    assert sink.saved_nodes.count("WRITER") == 2
+    assert sink.saved_nodes.count("EXECUTE_TOOL") == 2
+    assert "来源结论存在冲突" in result.content
+    assert sink.saved_nodes[-1] == "FINALIZE"
+
+
+class UnknownCitationProvider(OfflineModelProvider):
+    def write(self, command, question, plan, sources, evidence, previous_review):
+        draft, usage = super().write(
+            command, question, plan, sources, evidence, previous_review
+        )
+        draft.claims[0].evidenceRefs = ["ev-unknown"]
+        draft.content += " [ev-unknown]"
+        return draft, usage
+
+
+def test_writer_rejects_unknown_evidence_binding() -> None:
+    with pytest.raises(ValueError, match="unknown evidence citation"):
+        ResearchWorkflow(model_provider=UnknownCitationProvider()).run(
+            command(maxSources=1, maxToolCalls=1), RecordingSink()
+        )
+
+
+def test_claim_requires_at_least_one_evidence_reference() -> None:
+    with pytest.raises(ValidationError):
+        ClaimDraft(
+            claimId="claim-1",
+            statement="unsupported",
+            evidenceRefs=[],
+            confidence=0.1,
+        )

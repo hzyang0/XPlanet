@@ -11,6 +11,7 @@ public class AiEvidenceRecord {
     private Long sourceId;
     private String locator;
     private String content;
+    private String contentHash;
     private Double score;
 
     public AiReportVO.EvidenceVO toView() {
@@ -19,6 +20,7 @@ public class AiEvidenceRecord {
         view.setSourceId(sourceId);
         view.setLocator(locator);
         view.setContent(content);
+        view.setContentHash(contentHash);
         view.setScore(score);
         return view;
     }

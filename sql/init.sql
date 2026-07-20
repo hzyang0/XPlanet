@@ -167,7 +167,8 @@ CREATE TABLE `source_document` (
 CREATE TABLE `evidence_chunk` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, `task_id` BIGINT UNSIGNED NOT NULL,
     `run_id` CHAR(36) NOT NULL, `source_id` BIGINT UNSIGNED NOT NULL,
-    `locator` VARCHAR(500) NOT NULL DEFAULT '', `content` MEDIUMTEXT NOT NULL, `score` DECIMAL(6,5) NULL,
+    `locator` VARCHAR(500) NOT NULL DEFAULT '', `content` MEDIUMTEXT NOT NULL,
+    `content_hash` CHAR(64) NOT NULL, `score` DECIMAL(6,5) NULL,
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (`id`),
     KEY `idx_evidence_run` (`run_id`, `id`), KEY `idx_evidence_source` (`source_id`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='可追溯证据片段';

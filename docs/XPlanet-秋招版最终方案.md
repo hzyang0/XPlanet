@@ -35,7 +35,7 @@ XPlanet 秋招版不再追求“大而全的企业级多 Agent 平台”，也�
 
 1. `已实现` 只能用于当前代码中真实存在并通过测试的能力；
 2. `目标` 表示已经确定实施，但尚未完成；
-3. 未运行真实模型、真实搜索或真实向量检索时，不得宣传相应质量；
+3. 未运行真实模型、真实 Web 搜索或真实站内检索时，不得宣传相应质量；
 4. 旧链路只有在新链路通过等价测试后才能删除；
 5. 每阶段先执行局部测试，再执行全量回归和相关 smoke；
 6. 测试通过后更新本文状态，并独立 commit、push；
@@ -55,9 +55,9 @@ XPlanet 秋招版不再追求“大而全的企业级多 Agent 平台”，也�
 | 点赞状态机 + Outbox + RocketMQ + 幂等投影 | 最终一致性和消息可靠性案例 | 保留，不再重构 |
 | AI 任务状态机、预算、取消和请求幂等 | 长任务控制面 | 保留 |
 | AI 命令 Outbox + MQ | 可靠提交与重投 | 保留 |
-| LangGraph 固定工作流 | 已有 Agent 执行骨架 | 改成动态工具循环 |
+| LangGraph 动态工具循环 | Agent 可按预算选择 Search/Fetch/Finish | 保留 |
 | 节点 checkpoint + 强退恢复 | 已有故障恢复基础 | 保留并覆盖新节点 |
-| Source、Evidence、Citation、Report | 可追溯数据骨架 | 增强语义支持检查 |
+| Source、Evidence、Claim、Citation、Report | 可追溯数据与质量骨架 | 保留并继续做真实样本抽检 |
 | Redis Stream + SSE | 实时进度 | 用于 Agent 工作台 |
 | 报告人工审核 + OpenFeign 幂等发布 | Human-in-the-loop 和业务闭环 | 保留 |
 | 离线 Provider、pytest、Maven 测试和 smoke 脚本 | 零成本回归基础 | 扩充真实质量评测 |
@@ -65,9 +65,9 @@ XPlanet 秋招版不再追求“大而全的企业级多 Agent 平台”，也�
 ### 2.2 基线差距与实施状态
 
 1. **Research Workspace（已完成）**：现已展示任务、预算、SSE 节点时间线、来源、Evidence、Citation、模型用量、报告审核和发布；
-2. **Agent 没有真实决策循环**：Planner 固定三步，联网 Provider 一次调用同时完成搜索和写作；
+2. **动态工具循环（已完成）**：Planner、Decision、Search/Fetch、预算、去重、安全抓取和恢复均已实现；
 3. **站内知识没有进入 Agent 工具**：社区和 Agent 只有“报告发布文章”的单向关系；
-4. **质量数据不够**：当前主要验证结构闭包，不能证明 Claim 被 Evidence 语义支持，也没有 RAG Recall@K 和真实任务成功率。
+4. **Claim–Evidence–Critic（工程闭环已完成）**：已实现显式 Claim、Evidence 哈希、结构化 Critic、单次补研究和词面支持门禁；真实联网语义质量仍待有密钥时抽检。
 
 这四项是后续全部工作的唯一主线。
 
@@ -137,31 +137,31 @@ SourceDocument
 
 Critic 输出结构化问题列表：缺少证据、证据不支持、来源质量低、结论冲突、覆盖不足。只有影响核心结论的问题才触发补研究。
 
-#### D. 最小站内知识 RAG
+#### D. 最小站内知识检索
 
-社区文章进入一个可重建的 Qdrant 索引，Agent 新增 `internal_search` 工具：
+Agent 新增 `internal_search` 工具，直接检索 MySQL 中已发布且未删除的社区文章：
 
 ```text
-已发布文章 → 分块 → Embedding → Qdrant
-用户问题 → Embedding → TopK 召回 → 返回文章/片段/分数 → Evidence
+已发布文章 → MySQL FULLTEXT(title, content)
+用户问题 → internal_search → TopK 文章/摘要/相关度 → Evidence
 ```
 
 约束：
 
-- MySQL 文章是事实源，Qdrant 只是可重建索引；
-- chunk ID 由 `articleId + contentHash + chunkIndex` 确定，重复索引必须幂等；
-- Qdrant payload 仅保留检索所需元数据；
-- 提供全量重建脚本，索引异常不能影响文章发布；
-- 报告发布成功后触发一次增量索引，失败由重建脚本修复；
+- 不新增 Qdrant、Embedding 服务、索引双写和重建任务；
+- MySQL 文章既是事实源也是秋招版搜索索引，发布成功即可被检索；
+- FULLTEXT 负责候选召回，文章状态与删除标记在同一 SQL 中过滤；
 - 初版只索引已发布且未删除的文章；
 - 点赞数只作为可解释的轻量排序信号，不直接代表事实正确性。
+
+这是有意识的精简：当前数据规模和面试时间不足以证明向量库的必要性。未来只有当同义表达召回数据显著差于目标时，再把检索 Provider 替换成 Embedding + 向量库，Agent 工具契约无需改变。
 
 #### E. 评测与可复现实验
 
 建立两套评测：
 
 1. `offline-demo`：CI 和日常回归使用固定语料，不产生模型费用；
-2. `live-eval`：显式提供 Key 时运行真实模型、Web Search 和 Qdrant。
+2. `live-eval`：显式提供 Key 时运行真实模型、Web Search 和 MySQL 站内检索。
 
 至少维护 30 个问题的 JSONL 数据集，覆盖：
 
@@ -179,7 +179,7 @@ Critic 输出结构化问题列表：缺少证据、证据不支持、来源质�
 | Completion Rate | 预算内生成完整报告 | live 数据集不低于 90% |
 | Citation Integrity | Citation 指向存在的 Evidence | 100% |
 | Claim Support | Evidence 语义支持 Claim | 抽样或 Judge 评测不低于 80% |
-| RAG Recall@5 | 标注相关站内文章能否被召回 | 不低于 80% |
+| Internal Recall@5 | 标注相关站内文章能否被召回 | 不低于 80% |
 | Budget Violation | 是否超工具/来源/Token/时间预算 | 0 |
 | Recovery Success | 强退重投后能否完成且无重复副作用 | 100% 测试用例通过 |
 | Duplicate Publish | 重复审核是否产生多篇文章 | 0 |
@@ -230,7 +230,7 @@ flowchart LR
 
     AG -->|"Model API"| LLM["可配置 LLM"]
     AG -->|"web_search / web_fetch"| WEB["互联网来源"]
-    AG -->|"internal_search"| QD[("Qdrant")]
+    AG -->|"internal_search"| AR
     AG -->|"checkpoint / progress / result"| AI
 
     AI --> DB[("MySQL")]
@@ -239,8 +239,6 @@ flowchart LR
     AI --> RD[("Redis")]
     AR --> RD
 
-    AR -. "文章内容" .-> IDX["幂等索引 / 重建"]
-    IDX --> QD
 ```
 
 ### 4.1 为什么仍保留这些组件
@@ -251,7 +249,6 @@ flowchart LR
 | MySQL | 任务、报告、证据、文章和 Outbox 的最终事实 | 必要 |
 | Redis | 缓存、限流、热榜、SSE 进度流 | 必要，已有多处真实使用 |
 | RocketMQ | 点赞、缓存失效和 AI 长任务削峰/重投 | 必要，已有可靠链路 |
-| Qdrant | 站内文章向量召回 | 新增且必要，只服务 RAG |
 | OpenFeign | Java 服务间类型化 HTTP 调用 | 必要，沿用现状 |
 | LangGraph | 显式状态、条件路由和恢复节点 | 必要 |
 
@@ -308,9 +305,8 @@ Critic 不是为了无限提高分数，而是防止无引用结论和明显证�
 2. 用户主动点击“审核并发布”；Agent 无权自行发布。
 3. xplanet-ai 通过 OpenFeign 调用 article 内部发布接口。
 4. report_id 作为幂等键；重复请求返回同一 article_id。
-5. 发布成功后触发该文章的分块和向量索引。
-6. 索引失败不回滚已发布文章，并可通过全量重建脚本修复。
-7. 后续任务通过 internal_search 检索该文章。
+5. MySQL FULLTEXT 与文章事实同库，发布成功后无需额外索引双写。
+6. 后续任务通过 internal_search 检索该文章。
 ```
 
 ### 5.4 失败、取消和恢复
@@ -374,9 +370,9 @@ next node
 
 - `ModelProvider`：结构化计划、动作决策、写作和 Critic；
 - `SearchProvider`：Web 搜索；
-- `EmbeddingProvider`：站内文章和 query 向量；
+- `InternalSearchProvider`：站内文章全文检索；
 - `ToolRegistry`：工具 Schema、执行、超时和统计；
-- `offline-demo`：固定模型/搜索/Embedding 结果；
+- `offline-demo`：固定模型和搜索结果；
 - `live`：通过环境变量启用真实 Provider。
 
 模型名、Base URL 和 Key 全部来自环境变量，不硬编码凭证或把特定模型写死为项目能力。
@@ -389,7 +385,7 @@ next node
 
 - MySQL 中 `ai_task/ai_run/ai_run_step/source_document/evidence_chunk/ai_report/report_citation/model_usage` 继续由 `xplanet-ai` 管理；
 - Redis Stream 只保存短期进度，不作为任务最终事实；
-- Qdrant 只保存文章 chunk 向量和可重建 payload；
+- 站内检索直接读取 `xplanet-article` 所拥有的已发布文章，不复制第二份知识事实；
 - Python 通过现有内部 Token 回写进度、checkpoint 和结果；
 - 社区文章仍由 `xplanet-article` 唯一拥有。
 
@@ -591,27 +587,37 @@ xplanet-web/
 - 缺证据、冲突证据、错误引用测试；
 - Critic 不无限循环；
 - 报告落库事务回滚测试；
-- live 样本人工抽检并记录边界。
+- 有真实 Key 和费用授权时执行 live 样本人工抽检并记录边界；无 Key 时不得声称语义质量已验收。
 
-### Phase 4：最小站内 RAG
+验收记录（2026-07-20）：
+
+- Writer 输出唯一 Claim ID、原文 statement、一个或多个 Evidence ID 与置信度；工作流只从这些绑定生成 Citation，并要求 ID 在 Markdown 中可见；
+- Evidence Builder 保存 locator 和独立片段 SHA-256，Java 契约、`evidence_chunk.content_hash`、Flyway V008 和查询 VO 全链路同步；
+- Critic 输出结构化 `issues/uncertainties/conflicts/supplementalQuery`，覆盖缺证据、冲突证据、错误引用和不支持论点；
+- Critic 只能触发一次补研究/重写，第二次审计后强制进入人工审核，避免反思死循环；
+- checkpoint 升级到 schema v3 并兼容读取 v2：旧 Writer/Critic 状态会回到新 Writer 重建 Claim；
+- Python 25 项测试、Java AI 模块测试和 10 条离线评测通过；离线 Citation Integrity 与词面 Claim Support 均为 100%；
+- Java 测试验证错误证据哈希拒绝、Citation 写入失败不推进状态，`complete` 的事务边界保证真实数据库整体回滚；
+- OpenAI Writer/Critic 严格结构化契约通过 MockTransport；当前无真实 API Key，因此 live 语义支持率仍明确标记为未验收。
+- Flyway 007→008、Docker smoke 和一次性强退恢复通过：Task 48 完成 schema v3 证据报告并幂等发布 Article 120；Task 47 在首个工具 checkpoint 后退出，2 次 attempt、3 个工具步骤且最终恢复到 `WAITING_REVIEW`。
+
+### Phase 4：最小站内知识检索
 
 目标：打通“研究→发布→知识→再研究”。
 
 任务：
 
-1. Compose 增加 Qdrant；
-2. 实现文章分块、Embedding、幂等 upsert；
-3. 实现 `internal_search`；
-4. 发布后触发单篇索引；
-5. 实现全量重建脚本；
-6. 建立带相关文章标注的 RAG 数据集。
+1. 为已发布文章增加 MySQL FULLTEXT 索引；
+2. 在 `xplanet-article` 提供受内部 Token 保护的 TopK 检索接口；
+3. Agent 新增有界 `internal_search` 工具和 Provider；
+4. 将站内结果转换为 Source/Evidence 并参与 Critic；
+5. 建立带相关文章标注的站内召回数据集。
 
 测试门禁：
 
-- Compose config 和 Qdrant health；
-- 重复索引不产生重复 chunk；
-- 更新/删除文章后重建结果正确；
-- RAG Recall@5 达到 80%；
+- FULLTEXT 迁移在新旧数据库均可执行；
+- 私有/删除文章不会被召回，TopK 有硬上限；
+- Internal Recall@5 达到 80%；
 - 完整 smoke 证明新发布文章能被后续任务召回。
 
 ### Phase 5：评测、可靠性和发布收口
@@ -622,7 +628,7 @@ xplanet-web/
 
 1. 数据集扩展到至少 30 个问题；
 2. 输出机器可读 JSON 和 `docs/evaluation-results.md`；
-3. 统计完成率、支持率、Recall@5、Token、成本和延迟；
+3. 统计完成率、支持率、Internal Recall@5、Token、成本和延迟；
 4. 重新执行恢复、重复消息、重复发布、MQ 暂停测试；
 5. 清理新链路替代后的死代码和过时配置；
 6. 更新 README、架构、零基础导读、演示脚本和面试材料；
@@ -632,7 +638,7 @@ xplanet-web/
 
 - Java/Python 全量测试；
 - Docker 全栈启动与 health；
-- 登录到发布再到 RAG 召回的真实 E2E；
+- 登录到发布再到站内召回的真实 E2E；
 - 故障恢复 smoke；
 - 评测指标达到本文门槛；
 - README 中所有“已实现”均可由代码、测试或实验结果证明。
@@ -678,7 +684,7 @@ docs: finalize demo and interview evidence
 5. 关键 Claim 有可定位 Evidence，错误引用不能落库；
 6. Critic 能发现缺口并至多补研究一次；
 7. 发布必须人工确认且重复发布不产生副作用；
-8. 新发布文章可以被站内 RAG 召回；
+8. 新发布文章可以被 `internal_search` 召回；
 9. 预算、取消、超时和强退恢复有自动化测试；
 10. 至少 30 个真实评测问题并输出可复现数据；
 11. Java、Python、Compose、smoke 和浏览器 E2E 全部通过；
@@ -696,14 +702,14 @@ docs: finalize demo and interview evidence
 
 ### 13.2 30 秒介绍
 
-> XPlanet 是一个面向开发者的可追溯研究 Agent。Agent 会动态制定计划，并在预算内循环调用 Web 搜索、网页抓取和站内 RAG，根据 Evidence 生成带引用报告；Critic 会检查关键结论是否被证据支持，并最多触发一次定向补研究。Java 平台用任务状态机、Transactional Outbox、RocketMQ、checkpoint 和幂等发布保证长任务可靠执行，用户审核后报告可以发布成社区文章并进入后续检索。
+> XPlanet 是一个面向开发者的可追溯研究 Agent。Agent 会动态制定计划，并在预算内循环调用 Web 搜索、网页抓取和站内知识检索，根据 Evidence 生成带引用报告；Critic 会检查关键结论是否被证据支持，并最多触发一次定向补研究。Java 平台用任务状态机、Transactional Outbox、RocketMQ、checkpoint 和幂等发布保证长任务可靠执行，用户审核后报告可以发布成社区文章并进入后续检索。
 
 ### 13.3 简历四条上限
 
 完成后只保留四类描述，并填入真实测试数据：
 
 1. LangGraph 动态规划与有界工具循环；
-2. Claim–Evidence–Citation、Critic 补研究和站内 RAG；
+2. Claim–Evidence–Citation、Critic 补研究和站内知识检索；
 3. 离线/在线评测及完成率、支持率、Recall、成本、延迟；
 4. Java 任务可靠性、checkpoint 恢复、Outbox/MQ 和幂等发布。
 
@@ -715,8 +721,8 @@ docs: finalize demo and interview evidence
 - Citation 存在为什么不等于 Evidence 支持 Claim？
 - checkpoint 保存什么，MQ 重投为什么不会重复副作用？
 - 为什么 Java 拥有任务事实、Python 负责编排？
-- Qdrant 数据丢失为什么可以重建？
-- 发布和向量索引为什么不需要分布式事务？
+- 为什么秋招版选择 MySQL FULLTEXT，而没有为了技术数量增加 Qdrant？
+- 将来换成向量检索时，为什么 Agent 的 `internal_search` 契约不必改变？
 - 为什么保留 Gateway、Redis、RocketMQ，却不引入 Nacos、Dubbo、Seata？
 - 评测集如何构造，指标有什么缺陷，数据能否复现？
 
@@ -739,8 +745,8 @@ docs: finalize demo and interview evidence
 | Phase 0 方案收敛 | 已完成 | 本文唯一有效，旧方案删除，引用更新 |
 | Phase 1 Agent 工作台 | 已完成 | 浏览器完整演示当前链路 |
 | Phase 2 动态工具循环 | 已完成（live 质量待有密钥时验收） | 动态决策、工具边界、预算、去重和恢复通过 |
-| Phase 3 Evidence/Critic | 待实施 | Claim Support 可评测并有补研究 |
-| Phase 4 站内 RAG | 待实施 | 发布内容可被检索，Recall@5 达标 |
+| Phase 3 Evidence/Critic | 已完成（live 语义质量待有密钥时验收） | Claim Support 可评测并有单次补研究 |
+| Phase 4 站内知识检索 | 待实施 | 发布内容可被检索，Internal Recall@5 达标 |
 | Phase 5 评测与发布 | 待实施 | 全量验收、真实数据、文档与演示完成 |
 
-后续实施从 **Phase 3：Evidence/Critic 质量闭环** 开始。
+后续实施从 **Phase 4：最小站内知识检索** 开始。

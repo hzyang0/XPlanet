@@ -2,7 +2,7 @@
 
 > 面向开发者的可追溯研究与社区平台：高并发社区底座、Agent 工作流、人工审核和幂等发布已形成首个可运行闭环。
 
-> **演进说明（2026-07-20）**：当前已完成秋招版 Phase 1 Research Workspace 和 Phase 2 有界动态工具循环；后续只按 [秋招版最终方案](docs/XPlanet-秋招版最终方案.md) 实施 Claim–Evidence 质量闭环、站内 RAG 和评测收口。目标能力在完成验收前不会描述为已实现。
+> **演进说明（2026-07-20）**：当前已完成秋招版 Phase 1 Research Workspace、Phase 2 有界动态工具循环和 Phase 3 Claim–Evidence–Critic 质量闭环；后续只按 [秋招版最终方案](docs/XPlanet-秋招版最终方案.md) 实施最小站内知识检索和评测收口。目标能力在完成验收前不会描述为已实现。
 
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.18-brightgreen.svg)](https://spring.io/projects/spring-boot)
@@ -37,10 +37,11 @@
 - **任务状态与请求幂等**：`xplanet-ai` 管理私有研究任务、运行实例、预算上限和版本条件状态迁移
 - **可靠长任务命令**：任务/运行/Outbox 同事务提交，带租约 relay 向 RocketMQ 投递请求与取消命令
 - **有界动态 Agent 图**：`xplanet-agent` 用 LangGraph 让 Planner 和 `decide_action` 在预算内循环选择 `web_search`、`web_fetch` 或结束；查询/URL 去重，工具次数、来源数、Token 和总超时均有上限
+- **Claim–Evidence–Critic 闭环**：Writer 输出显式 Claim 与 Evidence 绑定，证据片段保存 SHA-256；结构化 Critic 检查缺证据、冲突和错误引用，并且最多触发一次定向补研究
 - **安全工具边界**：搜索只产生候选来源，抓取结果再升级证据；HTTP 抓取逐跳检查协议、端口、DNS 公网地址、重定向、内容类型和响应大小
 - **可恢复长任务**：每个节点把版本化 checkpoint 写入 MySQL，Agent 崩溃后由 RocketMQ 重投并从下一节点恢复，失败最多尝试 3 次后进入明确 `FAILED`
 - **证据与进度闭环**：来源、证据、引用和报告在同一事务校验落库；步骤进度写 Redis Stream，并由 `xplanet-ai` 通过 SSE 输出
-- **评测与指标**：固定 JSONL 数据集离线评测结构成功率与引用索引有效性；Micrometer 暴露执行结果、节点耗时和 checkpoint 指标
+- **评测与指标**：固定 JSONL 数据集离线评测结构成功率、引用索引有效性和确定性词面 Claim Support；Micrometer 暴露执行结果、节点耗时和 checkpoint 指标
 - **Human-in-the-loop**：报告必须由任务所有者确认，随后通过内部 OpenFeign 调用幂等发布为文章；重复确认返回同一文章
 
 > 默认 `offline-demo` 用于零成本、可复现验收；另提供显式启用的 `openai-tools`（兼容旧配置名 `openai-web`），通过 Responses API 分别完成结构化规划/决策/写作和 Hosted Web Search。真实路径需要 API Key，目前只完成 MockTransport 契约测试，不能把离线评测结果描述为联网回答质量或事实正确率。
@@ -75,7 +76,7 @@
 | `xplanet-interaction` | 8082 | 点赞服务 | **文章有效性校验、关系状态机、Transactional Outbox、可恢复 MQ relay** |
 | `xplanet-user` | 8083 | 用户服务 | 用户查询、bcrypt 登录与 JWT 签发 |
  | `xplanet-ai` | 8084 | AI 控制面 | **私有任务、请求幂等、预算、可靠命令、checkpoint、模型用量、指标、SSE、审核发布** |
- | `xplanet-agent` | 8000（仅内部） | Python 执行面 | **LangGraph 动态工具循环、安全网页抓取、断点恢复、来源/证据/引用生成** |
+ | `xplanet-agent` | 8000（仅内部） | Python 执行面 | **LangGraph 动态工具循环、安全网页抓取、Claim/Evidence/Critic、单次补研究和断点恢复** |
 
 ## 快速开始
 
@@ -243,7 +244,7 @@ xplanet/
 - Token 使用标准 JWT/JWS 库签发和校验，签名密钥通过 `TOKEN_SECRET` 外部注入
 - 登录使用 Spring PasswordEncoder 校验 bcrypt 哈希；演示账号共用初始密码，仅用于本地数据
 - 点赞以 `like_relation` 为事实源,通过 Outbox 至少一次投递；消费端唯一事件表和事务批量投影吸收重复并支持崩溃恢复
-- AI 已完成离线确定性闭环、持久化 checkpoint、崩溃恢复、有限重试、基础评测与指标；联网 Provider 尚未用真实密钥验收，语义引用核验、RAG 和完整可观测平台仍是后续项
+- AI 已完成离线确定性闭环、持久化 checkpoint、崩溃恢复、有限重试、Claim–Evidence–Critic 和基础评测；联网 Provider 尚未用真实密钥验收，离线 100% 词面支持率不能替代联网事实核验，站内知识检索和完整可观测平台仍是后续项
 
 这些是有意识的取舍,不是不知道,面试时可展开聊改造方案。
 

@@ -169,11 +169,29 @@ def test_openai_components_run_inside_dynamic_workflow() -> None:
                     "url": None,
                     "reason": "enough",
                 }
-        else:
+        elif node == "writer":
             data = {
                 "title": "Recoverable Agent",
-                "content": "Checkpoint tool results before continuing [ev-1].",
-                "citations": [{"claimId": "claim-1", "evidenceRef": "ev-1", "supportScore": 0.9}],
+                "content": "[claim-1] XPlanet persists Agent checkpoints. [ev-1]\n\n## 不确定性与冲突\n\n- none",
+                "claims": [
+                    {
+                        "claimId": "claim-1",
+                        "statement": "XPlanet persists Agent checkpoints.",
+                        "evidenceRefs": ["ev-1"],
+                        "confidence": 0.9,
+                    }
+                ],
+            }
+        else:
+            assert node == "critic"
+            data = {
+                "approved": True,
+                "qualityScore": 0.9,
+                "claimSupportScore": 0.9,
+                "issues": [],
+                "uncertainties": [],
+                "conflicts": [],
+                "supplementalQuery": None,
             }
         return httpx.Response(200, json=json_response(data))
 
@@ -194,7 +212,7 @@ def test_openai_components_run_inside_dynamic_workflow() -> None:
     assert result.provider == "openai-tools"
     assert result.title == "Recoverable Agent"
     assert result.sources[0].url == "https://github.com/hzyang0/XPlanet"
-    assert len(result.usage) == 5
+    assert len(result.usage) == 6
     assert sink.saved_nodes.count("EXECUTE_TOOL") == 2
 
 

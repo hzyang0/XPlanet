@@ -24,8 +24,8 @@ public interface AiResultMapper {
     int insertSource(AiSourceRecord source);
 
     @Insert("INSERT INTO evidence_chunk " +
-            "(task_id, run_id, source_id, locator, content, score, create_time) " +
-            "VALUES (#{taskId}, #{runId}, #{sourceId}, #{locator}, #{content}, #{score}, NOW())")
+            "(task_id, run_id, source_id, locator, content, content_hash, score, create_time) " +
+            "VALUES (#{taskId}, #{runId}, #{sourceId}, #{locator}, #{content}, #{contentHash}, #{score}, NOW())")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insertEvidence(AiEvidenceRecord evidence);
 

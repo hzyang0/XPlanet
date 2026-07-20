@@ -52,6 +52,7 @@ public class AiResearchResult implements Serializable {
         private String sourceRef;
         private String locator;
         private String content;
+        private String contentHash;
         private Double score;
     }
 

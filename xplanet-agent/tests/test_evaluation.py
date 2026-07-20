@@ -1,7 +1,7 @@
 from xplanet_agent.evaluation import evaluate_cases
 
 
-def test_evaluation_names_index_validity_without_claiming_factual_support() -> None:
+def test_evaluation_separates_index_integrity_from_lexical_claim_support() -> None:
     summary = evaluate_cases(
         [
             {
@@ -16,5 +16,6 @@ def test_evaluation_names_index_validity_without_claiming_factual_support() -> N
 
     assert summary["successRate"] == 1
     assert summary["citationIndexValidityRate"] == 1
-    assert summary["claimSupportRate"] is None
-    assert "not factual support" in summary["claimSupportRateNote"]
+    assert summary["claimSupportRate"] == 1
+    assert summary["claimSupportThreshold"] == 0.55
+    assert "human audit" in summary["claimSupportMethod"]
