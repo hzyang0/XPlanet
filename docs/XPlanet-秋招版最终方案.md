@@ -557,7 +557,20 @@ xplanet-web/
 - Provider 契约测试；
 - 超预算、超时、取消、坏 Schema、重复 URL 测试；
 - 强退恢复测试证明已完成工具不重复执行；
-- 至少 5 个问题的显式 live smoke，结果只记录不先夸大质量。
+- 有明确 API Key 和成本授权时至少做 5 个问题的显式 live smoke，结果只记录不先夸大质量；没有密钥时以 MockTransport 契约测试验收工程链路，live 质量不得标为已验证。
+
+验收记录（2026-07-20）：
+
+- 拆分 `ModelProvider`、`SearchProvider`、`ToolRegistry` 和 `DocumentFetcher`，联网路径不再由单次 Provider 同时搜索和写整篇报告；
+- LangGraph 改为 `Planner → Decide Action → Execute Tool → Evidence Builder → Decide Action` 条件循环，支持 `web_search`、`web_fetch`、`finish_research`；
+- 工具次数、决策次数、来源数、输出 Token 和 deadline 均有硬上限；重复 query/URL 会自动替换为下一个有效动作，抓取只接受搜索候选 URL；
+- `web_fetch` 已限制 HTTP(S)、80/443、公网 DNS、逐跳重定向、内容类型、响应大小和超时；生产 egress proxy 仍保留为明确边界；
+- checkpoint 升级到 schema v2，`EXECUTE_TOOL` 先保存完整工具结果再进入 Evidence Builder；兼容读取 schema v1，但旧固定工作流状态会从 Planner 安全重建；
+- 永久输入/Schema/工具拒绝映射为 HTTP 400/409/422 并直接失败确认，超时和服务异常保留为可重试错误，避免确定性错误浪费 MQ 重投；
+- Python 22 项测试、Java 98 项测试和 10 条离线评测通过；离线评测成功率/引用索引有效率均为 100%，不代表事实支持率；
+- Docker smoke 通过：Task 31 产生 5 次工具、6 次决策、21 个 checkpoint 和 26 条进度，随后完成人工审核及幂等发布；
+- 一次性强退恢复通过：Task 34 在首个工具结果落库后退出，2 次 run attempt、3 个工具步骤、15 个 checkpoint，最终进入 `WAITING_REVIEW`；
+- OpenAI 结构化规划/决策/写作和 Hosted Web Search 已通过 MockTransport；当前环境无 API Key，未执行真实联网质量验收，也不声称真实模型质量已达标。
 
 ### Phase 3：Evidence/Critic 质量闭环
 
@@ -725,9 +738,9 @@ docs: finalize demo and interview evidence
 |---|---|---|
 | Phase 0 方案收敛 | 已完成 | 本文唯一有效，旧方案删除，引用更新 |
 | Phase 1 Agent 工作台 | 已完成 | 浏览器完整演示当前链路 |
-| Phase 2 动态工具循环 | 待实施 | 模型决策真实工具，预算和恢复通过 |
+| Phase 2 动态工具循环 | 已完成（live 质量待有密钥时验收） | 动态决策、工具边界、预算、去重和恢复通过 |
 | Phase 3 Evidence/Critic | 待实施 | Claim Support 可评测并有补研究 |
 | Phase 4 站内 RAG | 待实施 | 发布内容可被检索，Recall@5 达标 |
 | Phase 5 评测与发布 | 待实施 | 全量验收、真实数据、文档与演示完成 |
 
-后续实施从 **Phase 2：真实动态工具循环** 开始。
+后续实施从 **Phase 3：Evidence/Critic 质量闭环** 开始。

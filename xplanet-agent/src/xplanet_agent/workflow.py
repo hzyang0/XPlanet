@@ -13,13 +13,19 @@ from langgraph.graph import END, START, StateGraph
 from .models import (
     CitationResult,
     EvidenceResult,
+    FetchedDocument,
     ModelUsageResult,
+    ResearchPlan,
     ResearchResult,
+    SearchHit,
     SourceResult,
     TaskCommand,
+    ToolAction,
+    ToolExecutionResult,
 )
 from .progress import NullProgressSink, ProgressSink
-from .providers import ResearchProvider
+from .providers import ModelProvider, OfflineModelProvider, OfflineSearchProvider, SearchProvider
+from .tools import DocumentFetcher, OfflineDocumentFetcher, ToolRegistry
 
 
 class TaskCancelled(RuntimeError):
@@ -33,7 +39,15 @@ class ResearchState(TypedDict, total=False):
     command_hash: str
     resume_target: str
     question: str
-    plan: list[str]
+    plan: ResearchPlan
+    search_hits: list[SearchHit]
+    documents: list[FetchedDocument]
+    attempted_queries: list[str]
+    attempted_urls: list[str]
+    action: ToolAction
+    tool_result: ToolExecutionResult | None
+    decision_count: int
+    research_complete: bool
     sources: list[SourceResult]
     evidence: list[EvidenceResult]
     citations: list[CitationResult]
@@ -48,47 +62,28 @@ class ResearchState(TypedDict, total=False):
 
 
 class ResearchWorkflow:
-    """Bounded, traceable graph with durable application-level node checkpoints."""
-
-    _CORPUS = (
-        (
-            "https://github.com/hzyang0/XPlanet",
-            "XPlanet repository",
-            "XPlanet uses database state machines, Transactional Outbox, RocketMQ and persistent projections "
-            "to keep community writes recoverable while Caffeine and Redis serve hotspot reads.",
-        ),
-        (
-            "https://microservices.io/patterns/data/transactional-outbox.html",
-            "Transactional Outbox pattern",
-            "Transactional Outbox stores the business change and an event in one database transaction, then a "
-            "separate relay publishes it. Consumers must be idempotent because delivery is at least once.",
-        ),
-        (
-            "https://docs.langchain.com/oss/python/langgraph/quickstart",
-            "LangGraph quickstart",
-            "LangGraph StateGraph models workflows as explicit nodes and edges, including conditional routing. "
-            "This makes agent steps observable and gives recovery work a concrete state boundary.",
-        ),
-        (
-            "https://redis.io/docs/latest/develop/data-types/streams/",
-            "Redis Streams documentation",
-            "Redis Streams provide an append-only event structure with IDs and bounded reads, which fits transient "
-            "progress delivery while durable task status remains in a database.",
-        ),
-    )
+    """One bounded Agent loop with durable checkpoints around every side effect."""
 
     def __init__(
         self,
-        provider: ResearchProvider | None = None,
+        model_provider: ModelProvider | None = None,
+        search_provider: SearchProvider | None = None,
+        document_fetcher: DocumentFetcher | None = None,
         after_checkpoint: Callable[[str], None] | None = None,
     ) -> None:
-        self._provider = provider
+        self._model = model_provider or OfflineModelProvider()
+        self._tools = ToolRegistry(
+            search_provider or OfflineSearchProvider(),
+            document_fetcher or OfflineDocumentFetcher(),
+        )
         self._after_checkpoint = after_checkpoint
+
         builder = StateGraph(ResearchState)
         builder.add_node("resume", self._resume)
         builder.add_node("validate_input", self._validate_input)
         builder.add_node("planner", self._planner)
-        builder.add_node("research", self._research)
+        builder.add_node("decide_action", self._decide_action)
+        builder.add_node("execute_tool", self._execute_tool)
         builder.add_node("evidence_builder", self._evidence_builder)
         builder.add_node("writer", self._writer)
         builder.add_node("critic", self._critic)
@@ -96,9 +91,10 @@ class ResearchWorkflow:
         builder.add_edge(START, "resume")
         builder.add_conditional_edges("resume", self._resume_route)
         builder.add_edge("validate_input", "planner")
-        builder.add_edge("planner", "research")
-        builder.add_edge("research", "evidence_builder")
-        builder.add_edge("evidence_builder", "writer")
+        builder.add_edge("planner", "decide_action")
+        builder.add_conditional_edges("decide_action", self._after_decision)
+        builder.add_edge("execute_tool", "evidence_builder")
+        builder.add_edge("evidence_builder", "decide_action")
         builder.add_edge("writer", "critic")
         builder.add_conditional_edges("critic", self._after_critic)
         builder.add_edge("finalize", END)
@@ -113,6 +109,15 @@ class ResearchWorkflow:
             "deadline_at": time.time() + command.deadlineSeconds,
             "command_hash": command_hash,
             "resume_target": "validate_input",
+            "search_hits": [],
+            "documents": [],
+            "attempted_queries": [],
+            "attempted_urls": [],
+            "decision_count": 0,
+            "research_complete": False,
+            "sources": [],
+            "evidence": [],
+            "citations": [],
             "revisions": 0,
             "tool_calls": 0,
             "needs_revision": False,
@@ -123,7 +128,7 @@ class ResearchWorkflow:
         if saved:
             state.update(self._restore_checkpoint(saved, command_hash))
 
-        final = self._graph.invoke(state)
+        final = self._graph.invoke(state, config={"recursion_limit": command.maxToolCalls * 3 + 20})
         return ResearchResult(
             taskId=command.taskId,
             runId=command.runId,
@@ -139,7 +144,7 @@ class ResearchWorkflow:
 
     @property
     def provider_name(self) -> str:
-        return self._provider.name if self._provider is not None else "offline-demo"
+        return self._model.name
 
     def _resume(self, state: ResearchState) -> ResearchState:
         self._guard(state)
@@ -150,7 +155,8 @@ class ResearchWorkflow:
     ) -> Literal[
         "validate_input",
         "planner",
-        "research",
+        "decide_action",
+        "execute_tool",
         "evidence_builder",
         "writer",
         "critic",
@@ -161,7 +167,8 @@ class ResearchWorkflow:
         allowed = {
             "validate_input",
             "planner",
-            "research",
+            "decide_action",
+            "execute_tool",
             "evidence_builder",
             "writer",
             "critic",
@@ -187,144 +194,287 @@ class ResearchWorkflow:
             raise ValueError("question must contain 1..2000 characters")
         updates: ResearchState = {"question": question}
         self._checkpoint(state, "VALIDATE_INPUT", updates, "planner", started)
-        state["sink"].emit("VALIDATE_INPUT", "COMPLETED", "输入与预算校验完成", 10)
+        state["sink"].emit("VALIDATE_INPUT", "COMPLETED", "输入与预算校验完成", 8)
         return updates
 
     def _planner(self, state: ResearchState) -> ResearchState:
         started = time.monotonic()
         self._guard(state)
-        question = state["question"]
-        plan = [
-            f"明确问题边界：{question}",
-            "查找能够支撑关键结论的来源并保留来源身份",
-            "比较可靠性、复杂度与适用边界后形成可审核结论",
-        ]
+        plan, usage = self._model.plan(
+            self._command_with_remaining_tokens(state),
+            state["question"],
+        )
         updates: ResearchState = {"plan": plan}
-        self._checkpoint(state, "PLANNER", updates, "research", started)
-        state["sink"].emit("PLANNER", "COMPLETED", f"生成 {len(plan)} 个研究步骤", 25)
+        if usage is not None:
+            updates["usage"] = self._append_usage(state, usage)
+        self._checkpoint(state, "PLANNER", updates, "decide_action", started)
+        state["sink"].emit("PLAN_CREATED", "COMPLETED", f"生成 {len(plan.steps)} 个研究步骤", 18)
         return updates
 
-    def _research(self, state: ResearchState) -> ResearchState:
+    def _decide_action(self, state: ResearchState) -> ResearchState:
         started = time.monotonic()
         self._guard(state)
         command = state["command"]
-        if self._provider is not None:
-            result = self._provider.research(command)
-            updates: ResearchState = {
-                "sources": result.sources,
-                "evidence": result.evidence,
-                "citations": result.citations,
-                "title": result.title,
-                "content": result.content,
-                "tool_calls": result.tool_calls,
-                "provider_name": self._provider.name,
-                "usage": result.usage,
-            }
-            self._checkpoint(state, "PARALLEL_RESEARCH", updates, "evidence_builder", started)
-            state["sink"].emit(
-                "PARALLEL_RESEARCH",
-                "COMPLETED",
-                f"联网研究返回 {len(result.sources)} 个带引用来源",
-                45,
+        decision_count = state.get("decision_count", 0) + 1
+        forced_finish = (
+            state.get("tool_calls", 0) >= command.maxToolCalls
+            or decision_count > command.maxToolCalls + 2
+        )
+        usage = None
+        if forced_finish:
+            action = ToolAction(name="finish_research", reason="工具或决策预算已耗尽")
+        else:
+            action, usage = self._model.decide(
+                self._command_with_remaining_tokens(state),
+                state["question"],
+                state["plan"],
+                state.get("search_hits", []),
+                state.get("documents", []),
+                state.get("attempted_queries", []),
+                state.get("attempted_urls", []),
+                state.get("tool_calls", 0),
             )
-            return updates
-        count = min(command.maxSources, command.maxToolCalls, len(self._CORPUS))
-        if count < 1:
-            raise ValueError("research budget does not allow any source")
-        retrieved_at = datetime.now(timezone.utc).isoformat()
-        sources = []
-        for index, (url, title, content) in enumerate(self._CORPUS[:count], start=1):
-            sources.append(
-                SourceResult(
-                    sourceRef=f"src-{index}",
-                    url=url,
-                    title=title,
-                    contentHash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
-                    retrievedAt=retrieved_at,
-                    metadataJson='{"provider":"offline-demo"}',
-                )
-            )
-        updates: ResearchState = {"sources": sources, "tool_calls": count}
-        self._checkpoint(state, "PARALLEL_RESEARCH", updates, "evidence_builder", started)
-        state["sink"].emit("PARALLEL_RESEARCH", "COMPLETED", f"检索并读取 {count} 个来源", 45)
+            action = self._sanitize_action(state, action)
+
+        complete = action.name == "finish_research"
+        if complete and not state.get("evidence"):
+            fallback = self._fallback_action(state)
+            if fallback.name != "finish_research" and state.get("tool_calls", 0) < command.maxToolCalls:
+                action = fallback
+                complete = False
+        updates: ResearchState = {
+            "action": action,
+            "decision_count": decision_count,
+            "research_complete": complete,
+        }
+        if usage is not None:
+            updates["usage"] = self._append_usage(state, usage)
+        next_node = "writer" if complete else "execute_tool"
+        self._checkpoint(state, "DECIDE_ACTION", updates, next_node, started)
+        message = (
+            "证据收集完成，进入报告生成"
+            if complete
+            else f"选择工具 {action.name}：{action.reason}"
+        )
+        state["sink"].emit("DECIDE_ACTION", "COMPLETED", message, self._loop_progress(state, 0))
+        return updates
+
+    def _sanitize_action(self, state: ResearchState, action: ToolAction) -> ToolAction:
+        if action.name == "web_search":
+            query = (action.query or "").strip()
+            if query in state.get("attempted_queries", []):
+                return self._fallback_action(state)
+            return action.model_copy(update={"query": query})
+        if action.name == "web_fetch":
+            url = (action.url or "").strip()
+            known_urls = {item.url for item in state.get("search_hits", [])}
+            if url in state.get("attempted_urls", []) or url not in known_urls:
+                return self._fallback_action(state)
+            return action.model_copy(update={"url": url})
+        return action
+
+    def _fallback_action(self, state: ResearchState) -> ToolAction:
+        attempted_urls = set(state.get("attempted_urls", []))
+        fetched_urls = {item.url for item in state.get("documents", [])}
+        for hit in state.get("search_hits", [])[: state["command"].maxSources]:
+            if hit.url not in attempted_urls and hit.url not in fetched_urls:
+                return ToolAction(name="web_fetch", url=hit.url, reason="去重后读取下一个候选来源")
+        attempted_queries = set(state.get("attempted_queries", []))
+        for step in state["plan"].steps:
+            if step.searchQuery not in attempted_queries:
+                return ToolAction(name="web_search", query=step.searchQuery, reason="去重后执行下一研究步骤")
+        return ToolAction(name="finish_research", reason="没有未执行的有效工具动作")
+
+    def _after_decision(self, state: ResearchState) -> Literal["execute_tool", "writer"]:
+        return "writer" if state.get("research_complete", False) else "execute_tool"
+
+    def _execute_tool(self, state: ResearchState) -> ResearchState:
+        started = time.monotonic()
+        self._guard(state)
+        action = state["action"]
+        if state.get("tool_calls", 0) >= state["command"].maxToolCalls:
+            raise ValueError("tool-call budget exhausted before tool execution")
+        state["sink"].emit(
+            "TOOL_STARTED",
+            "RUNNING",
+            f"开始执行 {action.name}",
+            self._loop_progress(state, 1),
+        )
+        result = self._tools.execute(self._command_with_remaining_tokens(state), action)
+        attempted_queries = list(state.get("attempted_queries", []))
+        attempted_urls = list(state.get("attempted_urls", []))
+        if action.name == "web_search" and action.query not in attempted_queries:
+            attempted_queries.append(action.query or "")
+        if action.name == "web_fetch" and action.url not in attempted_urls:
+            attempted_urls.append(action.url or "")
+        usage = list(state.get("usage", []))
+        for item in result.usage:
+            usage = self._append_usage({**state, "usage": usage}, item)
+        updates: ResearchState = {
+            "tool_result": result,
+            "tool_calls": state.get("tool_calls", 0) + 1,
+            "attempted_queries": attempted_queries,
+            "attempted_urls": attempted_urls,
+            "usage": usage,
+        }
+        self._checkpoint(state, "EXECUTE_TOOL", updates, "evidence_builder", started)
+        count = len(result.searchHits) if result.searchHits else 1
+        state["sink"].emit(
+            "TOOL_COMPLETED",
+            "COMPLETED",
+            f"{action.name} 返回 {count} 项结果",
+            self._loop_progress({**state, **updates}, 2),
+        )
         return updates
 
     def _evidence_builder(self, state: ResearchState) -> ResearchState:
         started = time.monotonic()
         self._guard(state)
-        if state.get("evidence"):
-            evidence = state["evidence"]
-            updates: ResearchState = {}
-            self._checkpoint(state, "EVIDENCE_BUILDER", updates, "writer", started)
-            state["sink"].emit(
-                "EVIDENCE_BUILDER",
-                "COMPLETED",
-                f"校验 {len(evidence)} 条联网引用上下文",
-                62,
-            )
-            return updates
-        corpus_by_url = {url: content for url, _, content in self._CORPUS}
+        result = state.get("tool_result")
+        if result is None:
+            raise ValueError("evidence builder has no tool result")
+        search_hits = self._merge_hits(state.get("search_hits", []), result.searchHits)
+        if result.document is not None and result.action.url != result.document.url:
+            search_hits = [
+                item.model_copy(
+                    update={
+                        "url": result.document.url,
+                        "title": result.document.title,
+                        "snippet": result.document.content[:4000],
+                    }
+                )
+                if item.url == result.action.url
+                else item
+                for item in search_hits
+            ]
+        documents = self._merge_documents(
+            state.get("documents", []),
+            [result.document] if result.document is not None else [],
+        )
+        sources, evidence = self._materialize_evidence(state["command"], search_hits, documents)
+        if not evidence:
+            raise ValueError("tool result did not produce usable evidence")
+        updates: ResearchState = {
+            "search_hits": search_hits,
+            "documents": documents,
+            "sources": sources,
+            "evidence": evidence,
+            "tool_result": None,
+        }
+        self._checkpoint(state, "EVIDENCE_BUILDER", updates, "decide_action", started)
+        state["sink"].emit(
+            "EVIDENCE_ADDED",
+            "COMPLETED",
+            f"当前保留 {len(sources)} 个来源、{len(evidence)} 条证据",
+            self._loop_progress(state, 3),
+        )
+        return updates
+
+    @staticmethod
+    def _merge_hits(existing: list[SearchHit], additions: list[SearchHit]) -> list[SearchHit]:
+        merged = []
+        seen = set()
+        for item in [*existing, *additions]:
+            if item.url in seen:
+                continue
+            seen.add(item.url)
+            merged.append(item)
+        return merged[:60]
+
+    @staticmethod
+    def _merge_documents(
+        existing: list[FetchedDocument], additions: list[FetchedDocument]
+    ) -> list[FetchedDocument]:
+        merged = {item.url: item for item in existing}
+        for item in additions:
+            merged[item.url] = item
+        return list(merged.values())[:20]
+
+    @staticmethod
+    def _materialize_evidence(
+        command: TaskCommand,
+        hits: list[SearchHit],
+        documents: list[FetchedDocument],
+    ) -> tuple[list[SourceResult], list[EvidenceResult]]:
+        candidates = list(hits)
+        known_urls = {item.url for item in candidates}
+        for document in documents:
+            if document.url not in known_urls:
+                candidates.append(
+                    SearchHit(url=document.url, title=document.title, snippet=document.content[:4000])
+                )
+                known_urls.add(document.url)
+        documents_by_url = {item.url: item for item in documents}
+        retrieved_at = datetime.now(timezone.utc).isoformat()
+        sources = []
         evidence = []
-        for index, source in enumerate(state["sources"], start=1):
-            evidence.append(
-                EvidenceResult(
-                    evidenceRef=f"ev-{index}",
-                    sourceRef=source.sourceRef,
-                    locator="offline corpus summary",
-                    content=corpus_by_url[source.url],
-                    score=max(0.75, 0.96 - index * 0.03),
+        content_hashes = set()
+        for candidate in candidates:
+            document = documents_by_url.get(candidate.url)
+            content = document.content if document else candidate.snippet
+            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            if content_hash in content_hashes:
+                continue
+            content_hashes.add(content_hash)
+            index = len(sources) + 1
+            source_ref = f"src-{index}"
+            evidence_ref = f"ev-{index}"
+            metadata = json.dumps(
+                {
+                    "evidenceType": "fetched-document" if document else "search-snippet",
+                    "semanticSupportVerified": bool(document),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            sources.append(
+                SourceResult(
+                    sourceRef=source_ref,
+                    url=document.url if document else candidate.url,
+                    title=document.title if document else candidate.title,
+                    contentHash=content_hash,
+                    retrievedAt=retrieved_at,
+                    metadataJson=metadata,
                 )
             )
-        updates: ResearchState = {"evidence": evidence}
-        self._checkpoint(state, "EVIDENCE_BUILDER", updates, "writer", started)
-        state["sink"].emit("EVIDENCE_BUILDER", "COMPLETED", f"绑定 {len(evidence)} 条证据", 62)
-        return updates
+            evidence.append(
+                EvidenceResult(
+                    evidenceRef=evidence_ref,
+                    sourceRef=source_ref,
+                    locator="fetched document" if document else "web search snippet",
+                    content=content[:4000],
+                    score=0.88 if document else 0.55,
+                )
+            )
+            if len(sources) >= command.maxSources:
+                break
+        return sources, evidence
 
     def _writer(self, state: ResearchState) -> ResearchState:
         started = time.monotonic()
         self._guard(state)
-        if state.get("content") and state.get("title") and state.get("citations"):
-            updates: ResearchState = {}
-            self._checkpoint(state, "WRITER", updates, "critic", started)
-            state["sink"].emit("WRITER", "COMPLETED", "保留模型生成的带引用报告", 80)
-            return updates
-        question = state["question"]
-        evidence = state["evidence"]
-        sources = state["sources"]
-        citations = [
-            CitationResult(
-                claimId=f"claim-{index}",
-                evidenceRef=item.evidenceRef,
-                supportScore=item.score,
-            )
-            for index, item in enumerate(evidence, start=1)
-        ]
-        findings = "\n".join(f"- {item.content} [{item.evidenceRef}]" for item in evidence)
-        source_list = "\n".join(
-            f"- [{source.title}]({source.url}) ({source.sourceRef})" for source in sources
+        if not state.get("sources") or not state.get("evidence"):
+            raise ValueError("cannot write a report without persisted evidence")
+        draft, usage = self._model.write(
+            self._command_with_remaining_tokens(state),
+            state["question"],
+            state["plan"],
+            state["sources"],
+            state["evidence"],
         )
-        content = (
-            f"# {question}\n\n"
-            "> 当前报告由离线确定性提供器生成，用于验证 Agent 编排、证据和审核链路；"
-            "不代表已完成实时互联网研究。\n\n"
-            "## 研究计划\n\n"
-            + "\n".join(f"{i}. {step}" for i, step in enumerate(state["plan"], start=1))
-            + "\n\n## 有证据支持的发现\n\n"
-            + findings
-            + "\n\n## 工程结论\n\n"
-            "可靠的长任务系统需要把事实状态、可靠命令、幂等处理与可丢失的实时进度分层。"
-            "XPlanet 当前用 MySQL 保存任务事实，用 Outbox + RocketMQ 排队，用 Redis Stream 传进度，"
-            "并要求最终报告中的引用只能指向已保存的 evidenceRef。\n\n"
-            "## 来源\n\n"
-            + source_list
-        )
+        evidence_ids = {item.evidenceRef for item in state["evidence"]}
+        citation_ids = {item.evidenceRef for item in draft.citations}
+        if not draft.citations or not citation_ids.issubset(evidence_ids):
+            raise ValueError("writer returned an unknown or empty evidence citation")
         updates: ResearchState = {
-            "title": f"研究报告：{question[:80]}",
-            "content": content,
-            "citations": citations,
+            "title": draft.title,
+            "content": draft.content,
+            "citations": draft.citations,
         }
+        if usage is not None:
+            updates["usage"] = self._append_usage(state, usage)
         self._checkpoint(state, "WRITER", updates, "critic", started)
-        state["sink"].emit("WRITER", "COMPLETED", "生成带 evidenceRef 的报告草稿", 80)
+        state["sink"].emit("WRITER", "COMPLETED", "生成仅引用已保存 evidenceRef 的报告草稿", 86)
         return updates
 
     def _critic(self, state: ResearchState) -> ResearchState:
@@ -333,7 +483,7 @@ class ResearchWorkflow:
         evidence_ids = {item.evidenceRef for item in state["evidence"]}
         citation_ids = {item.evidenceRef for item in state["citations"]}
         coverage = len(citation_ids & evidence_ids) / max(1, len(evidence_ids))
-        valid = citation_ids.issubset(evidence_ids)
+        valid = bool(citation_ids) and citation_ids.issubset(evidence_ids)
         score = min(1.0, 0.65 + coverage * 0.3 + (0.05 if valid else 0.0))
         should_revise = score < 0.8 and state.get("revisions", 0) < 1
         updates: ResearchState = {
@@ -343,12 +493,7 @@ class ResearchWorkflow:
         }
         next_node = "writer" if should_revise else "finalize"
         self._checkpoint(state, "CRITIC", updates, next_node, started)
-        state["sink"].emit(
-            "CRITIC",
-            "COMPLETED",
-            f"引用索引有效，覆盖率 {coverage:.0%}",
-            95,
-        )
+        state["sink"].emit("CRITIC", "COMPLETED", f"引用索引有效，覆盖率 {coverage:.0%}", 95)
         return updates
 
     def _after_critic(self, state: ResearchState) -> Literal["writer", "finalize"]:
@@ -360,6 +505,27 @@ class ResearchWorkflow:
         self._checkpoint(state, "FINALIZE", {}, END, started)
         state["sink"].emit("FINALIZE", "COMPLETED", "报告进入人工审核", 100)
         return {}
+
+    @staticmethod
+    def _loop_progress(state: ResearchState, offset: int) -> int:
+        maximum = max(1, state["command"].maxToolCalls)
+        base = 20 + int(state.get("tool_calls", 0) / maximum * 58)
+        return min(78, base + offset)
+
+    def _command_with_remaining_tokens(self, state: ResearchState) -> TaskCommand:
+        consumed = sum(item.outputTokens for item in state.get("usage", []))
+        remaining = state["command"].maxTokens - consumed
+        if remaining <= 0:
+            raise ValueError("model output-token budget exhausted")
+        return state["command"].model_copy(update={"maxTokens": remaining})
+
+    def _append_usage(
+        self, state: ResearchState, usage: ModelUsageResult
+    ) -> list[ModelUsageResult]:
+        items = [*state.get("usage", []), usage]
+        if sum(item.outputTokens for item in items) > state["command"].maxTokens:
+            raise ValueError("model output-token budget exceeded")
+        return items
 
     def _checkpoint(
         self,
@@ -385,13 +551,21 @@ class ResearchWorkflow:
         next_node: str,
     ) -> str:
         payload: dict[str, Any] = {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "commandHash": state["command_hash"],
             "completedNode": completed_node,
             "nextNode": next_node,
             "deadlineAt": state["deadline_at"],
             "question": state.get("question"),
-            "plan": state.get("plan", []),
+            "plan": state["plan"].model_dump() if state.get("plan") else None,
+            "searchHits": [item.model_dump() for item in state.get("search_hits", [])],
+            "documents": [item.model_dump() for item in state.get("documents", [])],
+            "attemptedQueries": state.get("attempted_queries", []),
+            "attemptedUrls": state.get("attempted_urls", []),
+            "action": state["action"].model_dump() if state.get("action") else None,
+            "toolResult": state["tool_result"].model_dump() if state.get("tool_result") else None,
+            "decisionCount": state.get("decision_count", 0),
+            "researchComplete": state.get("research_complete", False),
             "sources": [item.model_dump() for item in state.get("sources", [])],
             "evidence": [item.model_dump() for item in state.get("evidence", [])],
             "citations": [item.model_dump() for item in state.get("citations", [])],
@@ -401,7 +575,7 @@ class ResearchWorkflow:
             "revisions": state.get("revisions", 0),
             "toolCalls": state.get("tool_calls", 0),
             "needsRevision": state.get("needs_revision", False),
-            "providerName": state.get("provider_name", "offline-demo"),
+            "providerName": state.get("provider_name", self.provider_name),
             "usage": [item.model_dump() for item in state.get("usage", [])],
         }
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
@@ -411,10 +585,13 @@ class ResearchWorkflow:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise ValueError("checkpoint is not valid JSON") from exc
-        if payload.get("schemaVersion") != 1:
-            raise ValueError("unsupported checkpoint schema version")
         if payload.get("commandHash") != command_hash:
             raise ValueError("checkpoint does not belong to this task command")
+        schema_version = payload.get("schemaVersion")
+        if schema_version == 1:
+            return self._restore_legacy_checkpoint(payload, command_hash)
+        if schema_version != 2:
+            raise ValueError("unsupported checkpoint schema version")
         target = payload.get("nextNode")
         if not isinstance(target, str):
             raise ValueError("checkpoint has no resume target")
@@ -422,7 +599,14 @@ class ResearchWorkflow:
             "resume_target": target,
             "deadline_at": float(payload["deadlineAt"]),
             "command_hash": command_hash,
-            "plan": list(payload.get("plan") or []),
+            "search_hits": [SearchHit.model_validate(item) for item in payload.get("searchHits") or []],
+            "documents": [
+                FetchedDocument.model_validate(item) for item in payload.get("documents") or []
+            ],
+            "attempted_queries": list(payload.get("attemptedQueries") or []),
+            "attempted_urls": list(payload.get("attemptedUrls") or []),
+            "decision_count": int(payload.get("decisionCount") or 0),
+            "research_complete": bool(payload.get("researchComplete")),
             "sources": [SourceResult.model_validate(item) for item in payload.get("sources") or []],
             "evidence": [
                 EvidenceResult.model_validate(item) for item in payload.get("evidence") or []
@@ -433,9 +617,18 @@ class ResearchWorkflow:
             "revisions": int(payload.get("revisions") or 0),
             "tool_calls": int(payload.get("toolCalls") or 0),
             "needs_revision": bool(payload.get("needsRevision")),
-            "provider_name": payload.get("providerName") or "offline-demo",
+            "provider_name": payload.get("providerName") or self.provider_name,
             "usage": [ModelUsageResult.model_validate(item) for item in payload.get("usage") or []],
         }
+        typed_fields = {
+            "plan": ("plan", ResearchPlan),
+            "action": ("action", ToolAction),
+            "toolResult": ("tool_result", ToolExecutionResult),
+        }
+        for source_name, (state_name, model) in typed_fields.items():
+            value = payload.get(source_name)
+            if value is not None:
+                restored[state_name] = model.model_validate(value)  # type: ignore[literal-required]
         optional_fields = {
             "question": "question",
             "title": "title",
@@ -448,7 +641,36 @@ class ResearchWorkflow:
                 restored[state_name] = value  # type: ignore[literal-required]
         return restored
 
-    def _command_hash(self, command: TaskCommand) -> str:
+    def _restore_legacy_checkpoint(
+        self, payload: dict[str, Any], command_hash: str
+    ) -> ResearchState:
+        # Schema v1 represented a fixed one-shot research node. Restart at the
+        # planner so partially completed legacy state cannot bypass the new tool loop.
+        restored: ResearchState = {
+            "resume_target": "planner" if payload.get("question") else "validate_input",
+            "deadline_at": float(payload["deadlineAt"]),
+            "command_hash": command_hash,
+            "search_hits": [],
+            "documents": [],
+            "attempted_queries": [],
+            "attempted_urls": [],
+            "decision_count": 0,
+            "research_complete": False,
+            "sources": [],
+            "evidence": [],
+            "citations": [],
+            "revisions": 0,
+            "tool_calls": 0,
+            "needs_revision": False,
+            "provider_name": self.provider_name,
+            "usage": [],
+        }
+        if payload.get("question"):
+            restored["question"] = payload["question"]
+        return restored
+
+    @staticmethod
+    def _command_hash(command: TaskCommand) -> str:
         canonical = json.dumps(
             command.model_dump(exclude={"eventId", "occurredAt", "traceId"}),
             ensure_ascii=False,

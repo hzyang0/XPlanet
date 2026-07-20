@@ -178,13 +178,26 @@ foreach ($citation in $aiReport.data.citations) {
     }
 }
 $progressEventCount = [long](docker exec xp-redis redis-cli XLEN "xp:ai:task:$($aiCreated.data.id):events")
-if ($progressEventCount -lt 7) {
-    throw "Agent 进度事件不完整，实际为 $progressEventCount"
-}
 $checkpointCount = [long](Invoke-SqlScalar `
     "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND s.status='COMPLETED' AND s.checkpoint_json IS NOT NULL AND JSON_VALID(s.checkpoint_json)=1;")
-if ($checkpointCount -ne 7) {
-    throw "Agent checkpoint 不完整或状态 JSON 非法，实际为 $checkpointCount"
+$toolCheckpointCount = [long](Invoke-SqlScalar `
+    "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND s.node_name='EXECUTE_TOOL' AND s.status='COMPLETED';")
+$decisionCheckpointCount = [long](Invoke-SqlScalar `
+    "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND s.node_name='DECIDE_ACTION' AND s.status='COMPLETED';")
+$evidenceCheckpointCount = [long](Invoke-SqlScalar `
+    "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND s.node_name='EVIDENCE_BUILDER' AND s.status='COMPLETED';")
+$schemaTwoCheckpointCount = [long](Invoke-SqlScalar `
+    "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND JSON_EXTRACT(s.checkpoint_json,'$.schemaVersion')=2;")
+$expectedCheckpointCount = 6 + 3 * $toolCheckpointCount
+if ($toolCheckpointCount -lt 1 -or $toolCheckpointCount -gt 5 `
+        -or $decisionCheckpointCount -ne $toolCheckpointCount + 1 `
+        -or $evidenceCheckpointCount -ne $toolCheckpointCount `
+        -or $checkpointCount -ne $expectedCheckpointCount `
+        -or $schemaTwoCheckpointCount -ne $checkpointCount) {
+    throw "Agent 动态 checkpoint 不完整：all=$checkpointCount, tools=$toolCheckpointCount, decisions=$decisionCheckpointCount, evidence=$evidenceCheckpointCount, schema2=$schemaTwoCheckpointCount"
+}
+if ($progressEventCount -lt $checkpointCount) {
+    throw "Agent 进度事件不完整，events=$progressEventCount, checkpoints=$checkpointCount"
 }
 $latestCheckpointNode = Invoke-SqlScalar `
     "SELECT s.node_name FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) ORDER BY s.id DESC LIMIT 1;"

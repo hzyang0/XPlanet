@@ -3,8 +3,9 @@ import json
 import httpx
 import pytest
 
-from xplanet_agent.models import TaskCommand
-from xplanet_agent.providers import OpenAIWebResearchProvider
+from xplanet_agent.models import TaskCommand, ToolAction
+from xplanet_agent.providers import OpenAIHostedSearchProvider, OpenAIModelProvider
+from xplanet_agent.tools import OfflineDocumentFetcher
 from xplanet_agent.workflow import ResearchWorkflow
 
 from test_workflow import RecordingSink
@@ -26,104 +27,205 @@ def command(**overrides) -> TaskCommand:
     return TaskCommand(**values)
 
 
-def response_payload(*, with_citation: bool = True, tool_calls: int = 1) -> dict:
-    annotations = []
-    if with_citation:
-        annotations.append(
-            {
-                "type": "url_citation",
-                "start_index": 0,
-                "end_index": 24,
-                "url": "https://example.com/checkpoints",
-                "title": "Checkpoint Guide",
-            }
-        )
-    output = [
-        {
-            "type": "web_search_call",
-            "action": {
-                "sources": [
-                    {
-                        "type": "url",
-                        "url": "https://example.com/checkpoints",
-                        "title": "Checkpoint Guide",
-                    }
-                ]
-            },
-        }
-        for _ in range(tool_calls)
-    ]
-    output.append(
-        {
-            "type": "message",
-            "content": [
-                {
-                    "type": "output_text",
-                    "text": "Durable checkpoints make completed nodes recoverable.",
-                    "annotations": annotations,
-                }
-            ],
-        }
-    )
+def json_response(data: dict, input_tokens: int = 10, output_tokens: int = 5) -> dict:
     return {
-        "output": output,
-        "usage": {"input_tokens": 120, "output_tokens": 80},
+        "output": [
+            {
+                "type": "message",
+                "content": [{"type": "output_text", "text": json.dumps(data)}],
+            }
+        ],
+        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
     }
 
 
-def provider(payload: dict, captured: list[dict] | None = None) -> OpenAIWebResearchProvider:
+def test_openai_model_provider_uses_structured_planning_and_preserves_usage() -> None:
+    captured: list[dict] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
-        if captured is not None:
-            captured.append(json.loads(request.content))
+        captured.append(json.loads(request.content))
         assert request.headers["authorization"] == "Bearer test-key"
         assert request.headers["x-client-request-id"] == "run-provider-1"
-        return httpx.Response(200, json=payload)
+        return httpx.Response(
+            200,
+            json=json_response(
+                {
+                    "steps": [
+                        {
+                            "stepId": "checkpoint",
+                            "objective": "Study durable recovery",
+                            "searchQuery": "durable agent checkpoint recovery",
+                        }
+                    ]
+                },
+                120,
+                30,
+            ),
+        )
 
-    return OpenAIWebResearchProvider(
+    provider = OpenAIModelProvider(
         api_key="test-key",
         model="test-model",
         base_url="https://api.example.test/v1",
         transport=httpx.MockTransport(handler),
     )
+    plan, usage = provider.plan(command(), command().question)
+
+    assert plan.steps[0].stepId == "checkpoint"
+    assert usage.inputTokens == 120
+    assert usage.outputTokens == 30
+    assert captured[0]["text"]["format"]["type"] == "json_schema"
+    assert captured[0]["text"]["format"]["name"] == "planner"
+    assert captured[0]["text"]["format"]["strict"] is True
+    assert captured[0]["text"]["format"]["schema"]["additionalProperties"] is False
+    assert (
+        captured[0]["text"]["format"]["schema"]["$defs"]["PlanStep"]["additionalProperties"]
+        is False
+    )
+    assert captured[0]["max_output_tokens"] == 4000
 
 
-def test_openai_web_provider_uses_bounded_web_search_and_preserves_usage() -> None:
+def hosted_search_payload(*, source: bool = True, calls: int = 1) -> dict:
+    output = []
+    for _ in range(calls):
+        output.append(
+            {
+                "type": "web_search_call",
+                "action": {
+                    "sources": (
+                        [
+                            {
+                                "type": "url",
+                                "url": "https://github.com/hzyang0/XPlanet",
+                                "title": "XPlanet repository",
+                            }
+                        ]
+                        if source
+                        else []
+                    )
+                },
+            }
+        )
+    output.append(
+        {
+            "type": "message",
+            "content": [{"type": "output_text", "text": "XPlanet persists Agent checkpoints."}],
+        }
+    )
+    return {"output": output, "usage": {"input_tokens": 50, "output_tokens": 20}}
+
+
+def test_hosted_search_is_one_bounded_tool_action_and_returns_candidates() -> None:
     captured: list[dict] = []
 
-    result = provider(response_payload(), captured).research(command())
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json=hosted_search_payload())
 
-    assert captured[0]["model"] == "test-model"
+    provider = OpenAIHostedSearchProvider(
+        api_key="test-key",
+        model="test-model",
+        transport=httpx.MockTransport(handler),
+    )
+    action = ToolAction(name="web_search", query="agent checkpoints", reason="find sources")
+    result = provider.search(command(), action, 1)
+
+    assert result.searchHits[0].url == "https://github.com/hzyang0/XPlanet"
+    assert result.usage[0].nodeName == "EXECUTE_TOOL"
+    assert result.usage[0].outputTokens == 20
     assert captured[0]["tools"] == [{"type": "web_search", "search_context_size": "medium"}]
     assert captured[0]["tool_choice"] == "required"
-    assert captured[0]["max_output_tokens"] == 4000
-    assert len(result.sources) == 1
-    assert result.sources[0].url == "https://example.com/checkpoints"
-    assert '"semanticSupportVerified":false' in result.sources[0].metadataJson
-    assert result.tool_calls == 1
-    assert result.usage[0].inputTokens == 120
-    assert result.usage[0].outputTokens == 80
+    assert captured[0]["max_tool_calls"] == 1
 
 
-def test_workflow_accepts_provider_result_and_checkpoints_usage() -> None:
+def test_openai_components_run_inside_dynamic_workflow() -> None:
+    decision_count = 0
+
+    def model_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal decision_count
+        payload = json.loads(request.content)
+        node = payload["text"]["format"]["name"]
+        if node == "planner":
+            data = {
+                "steps": [
+                    {"stepId": "one", "objective": "Find source", "searchQuery": "XPlanet"}
+                ]
+            }
+        elif node == "decide_action":
+            decision_count += 1
+            if decision_count == 1:
+                data = {"name": "web_search", "query": "XPlanet", "url": None, "reason": "find"}
+            elif decision_count == 2:
+                data = {
+                    "name": "web_fetch",
+                    "query": None,
+                    "url": "https://github.com/hzyang0/XPlanet",
+                    "reason": "read",
+                }
+            else:
+                data = {
+                    "name": "finish_research",
+                    "query": None,
+                    "url": None,
+                    "reason": "enough",
+                }
+        else:
+            data = {
+                "title": "Recoverable Agent",
+                "content": "Checkpoint tool results before continuing [ev-1].",
+                "citations": [{"claimId": "claim-1", "evidenceRef": "ev-1", "supportScore": 0.9}],
+            }
+        return httpx.Response(200, json=json_response(data))
+
+    def search_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=hosted_search_payload())
+
+    model = OpenAIModelProvider(api_key="test-key", transport=httpx.MockTransport(model_handler))
+    search = OpenAIHostedSearchProvider(
+        api_key="test-key", transport=httpx.MockTransport(search_handler)
+    )
     sink = RecordingSink()
+    result = ResearchWorkflow(
+        model_provider=model,
+        search_provider=search,
+        document_fetcher=OfflineDocumentFetcher(),
+    ).run(command(), sink)
 
-    result = ResearchWorkflow(provider(response_payload())).run(command(), sink)
-
-    assert result.provider == "openai-web"
-    assert result.qualityScore == 1.0
-    assert result.usage[0].model == "test-model"
-    assert "https://example.com/checkpoints" in result.content
-    assert sink.saved_nodes[-1] == "FINALIZE"
-
-
-def test_openai_web_provider_rejects_missing_citations_and_tool_budget_overrun() -> None:
-    with pytest.raises(ValueError, match="cited output text"):
-        provider(response_payload(with_citation=False)).research(command())
-
-    with pytest.raises(ValueError, match="tool-call budget"):
-        provider(response_payload(tool_calls=2)).research(command(maxToolCalls=1))
+    assert result.provider == "openai-tools"
+    assert result.title == "Recoverable Agent"
+    assert result.sources[0].url == "https://github.com/hzyang0/XPlanet"
+    assert len(result.usage) == 5
+    assert sink.saved_nodes.count("EXECUTE_TOOL") == 2
 
 
-def test_openai_web_provider_requires_explicit_api_key() -> None:
+def test_hosted_search_rejects_missing_sources_and_multiple_internal_calls() -> None:
+    def build_provider(payload: dict) -> OpenAIHostedSearchProvider:
+        return OpenAIHostedSearchProvider(
+            api_key="test-key",
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload)),
+        )
+
+    action = ToolAction(name="web_search", query="test", reason="test")
+    with pytest.raises(ValueError, match="no source candidates"):
+        build_provider(hosted_search_payload(source=False)).search(command(), action, 1)
+    with pytest.raises(ValueError, match="exactly one"):
+        build_provider(hosted_search_payload(calls=2)).search(command(), action, 1)
+
+
+def test_openai_providers_require_explicit_api_key() -> None:
     with pytest.raises(ValueError, match="OPENAI_API_KEY"):
-        OpenAIWebResearchProvider(api_key="")
+        OpenAIModelProvider(api_key="")
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        OpenAIHostedSearchProvider(api_key="")
+
+
+def test_openai_model_provider_rejects_invalid_structured_output() -> None:
+    provider = OpenAIModelProvider(
+        api_key="test-key",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=json_response({"unexpected": True}))
+        ),
+    )
+
+    with pytest.raises(ValueError):
+        provider.plan(command(), command().question)

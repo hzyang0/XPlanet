@@ -51,6 +51,17 @@ class AiTaskStateServiceTest {
         verify(taskMapper, never()).markRetrying(1L, "run-1", "permanent failure");
     }
 
+    @Test
+    void immediatelyFailsNonRetryableAgentError() {
+        when(taskMapper.findInternal(1L)).thenReturn(task("RUNNING"));
+
+        service.fail(1L, "run-1", "invalid tool action");
+
+        verify(taskMapper).markFailed(1L, "run-1", "invalid tool action");
+        verify(taskMapper).markRunFailed(1L, "run-1", "invalid tool action");
+        verify(taskMapper, never()).findRunAttempt(1L, "run-1");
+    }
+
     private AiTaskRecord task(String status) {
         AiTaskRecord task = new AiTaskRecord();
         task.setStatus(status);

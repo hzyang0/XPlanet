@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, model_validator
 
 
 class TaskCommand(BaseModel):
@@ -18,6 +20,59 @@ class TaskCommand(BaseModel):
     maxToolCalls: int = Field(default=10, ge=1, le=50)
     maxTokens: int = Field(default=8000, ge=1000, le=100_000)
     deadlineSeconds: int = Field(default=300, ge=30, le=3600)
+
+
+class PlanStep(BaseModel):
+    stepId: str = Field(min_length=1, max_length=64)
+    objective: str = Field(min_length=1, max_length=500)
+    searchQuery: str = Field(min_length=1, max_length=300)
+
+
+class ResearchPlan(BaseModel):
+    steps: list[PlanStep] = Field(min_length=1, max_length=8)
+
+
+class ToolAction(BaseModel):
+    name: Literal["web_search", "web_fetch", "finish_research"]
+    query: str | None = Field(default=None, max_length=300)
+    url: str | None = Field(default=None, max_length=2048)
+    reason: str = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_arguments(self) -> "ToolAction":
+        if self.name == "web_search" and not (self.query or "").strip():
+            raise ValueError("web_search requires query")
+        if self.name == "web_fetch" and not (self.url or "").strip():
+            raise ValueError("web_fetch requires url")
+        if self.name == "finish_research" and (self.query or self.url):
+            raise ValueError("finish_research does not accept query or url")
+        return self
+
+
+class SearchHit(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+    title: str = Field(min_length=1, max_length=500)
+    snippet: str = Field(min_length=1, max_length=4000)
+
+
+class FetchedDocument(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+    title: str = Field(min_length=1, max_length=500)
+    content: str = Field(min_length=1, max_length=50_000)
+    contentType: str = Field(default="text/plain", max_length=100)
+
+
+class ToolExecutionResult(BaseModel):
+    action: ToolAction
+    searchHits: list[SearchHit] = Field(default_factory=list, max_length=20)
+    document: FetchedDocument | None = None
+    usage: list["ModelUsageResult"] = Field(default_factory=list)
+
+
+class WriterDraft(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=100_000)
+    citations: list["CitationResult"] = Field(default_factory=list)
 
 
 class SourceResult(BaseModel):

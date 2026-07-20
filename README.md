@@ -2,7 +2,7 @@
 
 > 面向开发者的可追溯研究与社区平台：高并发社区底座、Agent 工作流、人工审核和幂等发布已形成首个可运行闭环。
 
-> **演进说明（2026-07-20）**：当前代码由可运行的 v2 可靠性底座和已完成的秋招版 Phase 1 Research Workspace 组成；后续只按 [秋招版最终方案](docs/XPlanet-秋招版最终方案.md) 实施动态工具循环、Claim–Evidence 质量闭环、站内 RAG 和可复现评测。目标能力在完成验收前不会描述为已实现。
+> **演进说明（2026-07-20）**：当前已完成秋招版 Phase 1 Research Workspace 和 Phase 2 有界动态工具循环；后续只按 [秋招版最终方案](docs/XPlanet-秋招版最终方案.md) 实施 Claim–Evidence 质量闭环、站内 RAG 和评测收口。目标能力在完成验收前不会描述为已实现。
 
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.18-brightgreen.svg)](https://spring.io/projects/spring-boot)
@@ -36,13 +36,14 @@
 - **Research Workspace**：无需 Node 构建即可运行的三栏工作台，覆盖登录、任务创建/列表/取消、带鉴权 SSE 重连、节点时间线、来源/Evidence/Citation、模型用量、报告编辑和人工发布
 - **任务状态与请求幂等**：`xplanet-ai` 管理私有研究任务、运行实例、预算上限和版本条件状态迁移
 - **可靠长任务命令**：任务/运行/Outbox 同事务提交，带租约 relay 向 RocketMQ 投递请求与取消命令
-- **可追溯 Agent 图**：`xplanet-agent` 用 LangGraph 执行输入校验、规划、研究、证据整理、写作和 Critic，工具次数、来源数和总超时均有上限
+- **有界动态 Agent 图**：`xplanet-agent` 用 LangGraph 让 Planner 和 `decide_action` 在预算内循环选择 `web_search`、`web_fetch` 或结束；查询/URL 去重，工具次数、来源数、Token 和总超时均有上限
+- **安全工具边界**：搜索只产生候选来源，抓取结果再升级证据；HTTP 抓取逐跳检查协议、端口、DNS 公网地址、重定向、内容类型和响应大小
 - **可恢复长任务**：每个节点把版本化 checkpoint 写入 MySQL，Agent 崩溃后由 RocketMQ 重投并从下一节点恢复，失败最多尝试 3 次后进入明确 `FAILED`
 - **证据与进度闭环**：来源、证据、引用和报告在同一事务校验落库；步骤进度写 Redis Stream，并由 `xplanet-ai` 通过 SSE 输出
 - **评测与指标**：固定 JSONL 数据集离线评测结构成功率与引用索引有效性；Micrometer 暴露执行结果、节点耗时和 checkpoint 指标
 - **Human-in-the-loop**：报告必须由任务所有者确认，随后通过内部 OpenFeign 调用幂等发布为文章；重复确认返回同一文章
 
-> 默认 `offline-demo` 用于零成本、可复现验收；另提供显式启用的 `openai-web` Responses API + Web Search 适配器。真实路径需要 API Key，目前只完成模拟契约测试，不能把离线评测结果描述为联网回答质量或事实正确率。
+> 默认 `offline-demo` 用于零成本、可复现验收；另提供显式启用的 `openai-tools`（兼容旧配置名 `openai-web`），通过 Responses API 分别完成结构化规划/决策/写作和 Hosted Web Search。真实路径需要 API Key，目前只完成 MockTransport 契约测试，不能把离线评测结果描述为联网回答质量或事实正确率。
 
 > 已引入轻量 Spring Cloud Gateway 作为统一外部入口；注册中心、分布式事务和监控全家桶仍按业务规模暂不引入。
 > 高可用(集群/哨兵/多实例)作为演进方向写在 [`docs/HA-AND-DEGRADE.md`](docs/HA-AND-DEGRADE.md),按需扩展。
@@ -74,7 +75,7 @@
 | `xplanet-interaction` | 8082 | 点赞服务 | **文章有效性校验、关系状态机、Transactional Outbox、可恢复 MQ relay** |
 | `xplanet-user` | 8083 | 用户服务 | 用户查询、bcrypt 登录与 JWT 签发 |
  | `xplanet-ai` | 8084 | AI 控制面 | **私有任务、请求幂等、预算、可靠命令、checkpoint、模型用量、指标、SSE、审核发布** |
- | `xplanet-agent` | 8000（仅内部） | Python 执行面 | **LangGraph 有界工作流、断点恢复、离线/联网 Provider、来源/证据/引用生成** |
+ | `xplanet-agent` | 8000（仅内部） | Python 执行面 | **LangGraph 动态工具循环、安全网页抓取、断点恢复、来源/证据/引用生成** |
 
 ## 快速开始
 
@@ -122,7 +123,7 @@ $env:AI_CONTROL_URL="http://localhost:8084"
 默认离线模式无需模型密钥。只有明确需要联网研究并接受外部 API 成本时才设置：
 
 ```powershell
-$env:AGENT_PROVIDER="openai-web"
+$env:AGENT_PROVIDER="openai-tools"
 $env:OPENAI_API_KEY="replace-with-your-key"
 $env:OPENAI_MODEL="gpt-5.6-terra"
 ```
@@ -169,7 +170,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 .\scripts\smoke-test.ps1
 ```
 
-脚本会验证健康检查、登录、AI 任务私有读取/幂等/跨用户隔离、Agent 执行、7 个进度与 checkpoint、Prometheus 执行/恢复指标、来源—证据—引用闭包、人工审核、重复发布幂等和取消，
+脚本会验证健康检查、登录、AI 任务私有读取/幂等/跨用户隔离、Agent 动态决策/工具/checkpoint 数量关系、Prometheus 执行/恢复指标、来源—证据—引用闭包、人工审核、重复发布幂等和取消，
 同时覆盖文章查询、可靠缓存失效 Outbox、重复点赞幂等、MQ 消费、持久化计数投影和未登录拦截。脚本会恢复原点赞状态和文章计数；研究任务和发布文章作为验收记录保留。
 
 验证 Agent 在节点提交后进程崩溃仍能恢复：

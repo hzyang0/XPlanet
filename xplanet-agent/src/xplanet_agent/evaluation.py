@@ -54,7 +54,6 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
             citation_coverage = len(cited_refs & evidence_refs) / max(1, len(evidence_refs))
             bounded = (
                 len(report.sources) <= command.maxSources
-                and len(report.sources) <= command.maxToolCalls
                 and len(report.sources) >= case.get("minSources", 1)
             )
             success = citation_index_valid and evidence_source_valid and bounded

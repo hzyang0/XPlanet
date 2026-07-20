@@ -21,7 +21,7 @@
 | `xplanet-article` | 8081 | Articles, comments, two-level cache, durable cache-invalidation Outbox, user lookup, durable like-count projection |
 | `xplanet-interaction` | 8082 | Article validation, like state machine, Transactional Outbox, and recoverable RocketMQ relay |
 | `xplanet-ai` | 8084 | AI task control plane, reliable command Outbox, progress SSE, reports, review, and publishing |
-| `xplanet-agent` | 8000 (internal) | Python/LangGraph bounded execution, checkpoints, evidence, writing, and evaluation |
+| `xplanet-agent` | 8000 (internal) | Python/LangGraph bounded planner-decision-tool loop, safe fetch, checkpoints, evidence, writing, and evaluation |
 
 Important entrypoints:
 
@@ -111,7 +111,7 @@ Protected write flows require a token from `POST /api/user/login`. Verify the co
 - Cache: article update/delete transaction -> cache-invalidation Outbox relay -> MQ invalidation consumer -> L1/L2 cache manager.
 - Likes: interaction validates the active article through typed OpenFeign -> state transition + Outbox transaction -> leased relay -> RocketMQ -> unique delta inbox -> transactional batch projection.
 - Authentication: Gateway first-layer validation -> user login -> token utility/interceptor in common -> protected controller and resource ownership check.
-- AI: task transaction + Outbox -> RocketMQ -> Java consumer -> Python Agent graph -> checkpoint/progress/result -> review -> OpenFeign article publish.
+- AI: task transaction + Outbox -> RocketMQ -> Java consumer -> Python planner/decision/search-fetch/evidence loop -> checkpoint/progress/result -> review -> OpenFeign article publish.
 - Performance: benchmark scripts and claims -> implementation/configuration -> fresh measurements. Never repeat benchmark numbers without reproducing or clearly labeling their source.
 
 ## Current verification caveats

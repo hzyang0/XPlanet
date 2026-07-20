@@ -1,6 +1,6 @@
 # XPlanet 零基础入门与项目导读
 
-> 本文用于理解当前可运行的 v2 后端和已完成的 Phase 1 Research Workspace。掌握当前链路后，再阅读 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 了解后续为什么优先建设真实工具循环、Evidence/Critic、站内 RAG 和可复现评测。
+> 本文用于理解当前可运行的后端、Phase 1 Research Workspace 和 Phase 2 动态工具循环。掌握当前链路后，再阅读 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 了解后续 Evidence/Critic、站内 RAG 和评测收口。
 
 > 适合第一次接触 Java 微服务、Redis、RocketMQ 和 Agent 的同学。建议不要一上来逐行读代码，先按本文把系统跑起来，再沿着一条请求追代码。
 
@@ -308,15 +308,17 @@ flowchart TD
     D --> E["内部 HTTP 调 Python Agent"]
     E --> F["Validate Input"]
     F --> G["Planner"]
-    G --> H["Research"]
-    H --> I["Evidence Builder"]
-    I --> J["Writer"]
-    J --> K["Critic"]
-    K --> L["Finalize"]
-    L --> M["来源/证据/引用/报告事务落库"]
-    M --> N["WAITING_REVIEW"]
-    N --> O["用户审核"]
-    O --> P["OpenFeign 幂等发布文章"]
+    G --> H["Decide Action"]
+    H -->|"web_search / web_fetch"| I["Execute Tool"]
+    I --> J["Evidence Builder"]
+    J --> H
+    H -->|"finish_research"| K["Writer"]
+    K --> L["Critic"]
+    L --> M["Finalize"]
+    M --> N["来源/证据/引用/报告事务落库"]
+    N --> O["WAITING_REVIEW"]
+    O --> P["用户审核"]
+    P --> Q["OpenFeign 幂等发布文章"]
 ```
 
 Java 和 Python 为什么分开：
@@ -330,9 +332,10 @@ Agent 节点：
 | 节点 | 做什么 | 完成后保存什么 |
 |---|---|---|
 | Validate Input | 校验问题和预算 | 清洗后的问题 |
-| Planner | 生成研究步骤 | plan |
-| Research | 获取来源 | sources、工具次数、模型用量 |
-| Evidence Builder | 来源中整理证据 | evidence |
+| Planner | 模型生成结构化研究步骤 | plan |
+| Decide Action | 根据计划、现有证据和剩余预算选择下一动作 | action、决策次数 |
+| Execute Tool | 执行 `web_search` 或 `web_fetch` | 工具结果、工具次数、模型用量 |
+| Evidence Builder | 去重来源并把搜索摘要/抓取正文绑定为证据 | sources、evidence |
 | Writer | 根据证据写报告 | title、content、citations |
 | Critic | 检查引用 ID 闭包和覆盖率 | quality score、是否修订 |
 | Finalize | 结束机器执行 | 最终 checkpoint |
@@ -364,7 +367,7 @@ runId + nodeName + inputHash + stateVersion + checkpointJson
 5. 从 `nextNode` 继续；
 6. 最多 3 次 attempt，仍失败则进入 `FAILED`。
 
-`scripts/test-agent-recovery.ps1` 会在 Research checkpoint 保存后执行 `os._exit(17)`，这不是模拟抛异常，而是真正终止 Agent 进程。
+`scripts/test-agent-recovery.ps1` 会在首个 `EXECUTE_TOOL` 结果已经保存后执行 `os._exit(17)`，随后关闭一次性故障开关。这不是模拟抛异常，而是真正终止 Agent 进程；恢复从 `EVIDENCE_BUILDER` 开始，所以已完成工具不会再调用。
 
 ## 9. 为什么同时使用 MySQL、Redis 和 MQ
 
@@ -563,17 +566,18 @@ mvn -B -ntp clean test
 
 ### 30 秒
 
-> XPlanet 是开发者社区与可追溯研究 Agent 的结合。外部通过 Gateway 统一访问，Java 微服务负责社区业务和 AI 任务控制，Python LangGraph 负责执行。点赞、缓存失效和 AI 长任务通过 Outbox、RocketMQ、幂等消费与 checkpoint 保证故障可恢复，报告经过证据绑定和人工审核后幂等发布成文章。
+> XPlanet 是开发者社区与可追溯研究 Agent 的结合。外部通过 Gateway 统一访问，Java 负责社区业务和 AI 任务控制，Python LangGraph 在预算内动态选择搜索、抓取或结束。工具结果先 checkpoint 再推进，报告经过证据绑定和人工审核后幂等发布成文章。
 
 ### 重点亮点
 
 1. 点赞关系是事实源，计数是异步投影，不依赖易丢的 Redis 缓冲；
 2. 业务变更与 Outbox 同事务，消费者用 eventId 幂等；
 3. Caffeine + Redis 解决热点读，缓存失效也做成可恢复事件；
-4. Java 控制面与 Python Agent 执行面分离；
-5. 每节点 checkpoint，真实强退后从下一节点恢复；
-6. Human-in-the-loop 控制发布副作用；
-7. Gateway 统一入口，但下游仍独立鉴权，不盲目信任网关。
+4. 单 Agent 动态决策搜索/抓取，预算、去重、超时和安全抓取边界明确；
+5. Java 控制面与 Python Agent 执行面分离；
+6. 工具结果 checkpoint 后真实强退，从下一节点恢复；
+7. Human-in-the-loop 控制发布副作用；
+8. Gateway 统一入口，但下游仍独立鉴权，不盲目信任网关。
 
 ### 主动说明边界
 

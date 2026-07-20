@@ -43,8 +43,7 @@ public class AiTaskStateService {
         if (task == null || AiTaskStatus.CANCELLED.name().equals(task.getStatus())) {
             return;
         }
-        String abbreviated = error == null ? "agent execution failed"
-                : error.substring(0, Math.min(1000, error.length()));
+        String abbreviated = abbreviate(error);
         Integer attempt = taskMapper.findRunAttempt(taskId, runId);
         if (attempt != null && attempt >= maxAttempts) {
             taskMapper.markFailed(taskId, runId, abbreviated);
@@ -53,5 +52,21 @@ public class AiTaskStateService {
         }
         taskMapper.markRetrying(taskId, runId, abbreviated);
         taskMapper.markRunRetrying(taskId, runId, abbreviated);
+    }
+
+    @Transactional
+    public void fail(Long taskId, String runId, String error) {
+        AiTaskRecord task = taskMapper.findInternal(taskId);
+        if (task == null || AiTaskStatus.CANCELLED.name().equals(task.getStatus())) {
+            return;
+        }
+        String abbreviated = abbreviate(error);
+        taskMapper.markFailed(taskId, runId, abbreviated);
+        taskMapper.markRunFailed(taskId, runId, abbreviated);
+    }
+
+    private String abbreviate(String error) {
+        return error == null ? "agent execution failed"
+                : error.substring(0, Math.min(1000, error.length()));
     }
 }

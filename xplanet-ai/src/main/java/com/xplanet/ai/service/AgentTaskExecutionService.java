@@ -3,6 +3,7 @@ package com.xplanet.ai.service;
 import com.xplanet.ai.client.AgentServiceClient;
 import com.xplanet.api.dto.AiResearchResult;
 import com.xplanet.api.dto.AiTaskCommand;
+import feign.FeignException;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -39,6 +40,21 @@ public class AgentTaskExecutionService {
             AiResearchResult result = agentClient.execute(internalToken.value(), command);
             resultService.complete(command.getEventId(), result);
             record("success", started);
+        } catch (FeignException e) {
+            if (e.status() == 400 || e.status() == 409 || e.status() == 422) {
+                stateService.fail(command.getTaskId(), command.getRunId(), e.getMessage());
+                resultService.acknowledge(command.getEventId());
+                record("rejected", started);
+                return;
+            }
+            stateService.retry(command.getTaskId(), command.getRunId(), e.getMessage());
+            record("failure", started);
+            throw e;
+        } catch (IllegalArgumentException e) {
+            stateService.fail(command.getTaskId(), command.getRunId(), e.getMessage());
+            resultService.acknowledge(command.getEventId());
+            record("rejected", started);
+            return;
         } catch (Exception e) {
             stateService.retry(command.getTaskId(), command.getRunId(), e.getMessage());
             record("failure", started);

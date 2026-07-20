@@ -12,6 +12,8 @@ import org.junit.jupiter.api.Test;
 
 import java.time.OffsetDateTime;
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -120,6 +122,22 @@ class AiResultPersistenceServiceTest {
         verify(resultMapper, never()).insertSource(any());
     }
 
+    @Test
+    void shouldRejectModelCallRecordsBeyondDynamicAgentBound() {
+        AiResearchResult invalid = result();
+        invalid.setUsage(new ArrayList<>(Collections.nCopies(7, invalid.getUsage().get(0))));
+        AiTaskRecord constrained = task("RUNNING");
+        constrained.setMaxToolCalls(1);
+        when(resultMapper.insertInbox(AiResultPersistenceService.CONSUMER, "event-1")).thenReturn(1);
+        when(taskMapper.findInternalForUpdate(1L)).thenReturn(constrained);
+
+        assertThatThrownBy(() -> service.complete("event-1", invalid))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("AI result exceeds task bounds");
+
+        verify(resultMapper, never()).insertSource(any());
+    }
+
     private AiTaskRecord task(String status) {
         AiTaskRecord task = new AiTaskRecord();
         task.setId(1L);
@@ -139,7 +157,7 @@ class AiResultPersistenceServiceTest {
                 "ev-1", "src-1", "section 1", "supporting evidence", 0.9);
         AiResearchResult.Citation citation = new AiResearchResult.Citation("claim-1", "ev-1", 0.9);
         AiResearchResult.Usage usage = new AiResearchResult.Usage(
-                "PARALLEL_RESEARCH", "openai", "test-model", 120, 80,
+                "EXECUTE_TOOL", "openai", "test-model", 120, 80,
                 BigDecimal.ZERO, 25L, 0);
         return AiResearchResult.builder()
                 .taskId(1L).runId("run-1").title("Report").content("Content")

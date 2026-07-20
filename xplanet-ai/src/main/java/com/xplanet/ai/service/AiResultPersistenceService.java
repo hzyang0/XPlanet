@@ -150,7 +150,10 @@ public class AiResultPersistenceService {
                 || result.getProvider().isBlank() || result.getProvider().length() > 64
                 || result.getSources().isEmpty() || result.getSources().size() > task.getMaxSources()
                 || result.getEvidence().size() > task.getMaxToolCalls() * 5
-                || result.getUsage().size() > task.getMaxToolCalls()) {
+                // A dynamic Agent can make one planner call, up to one decision and one
+                // search-model call per tool action, then one final decision and up to
+                // two writer calls (single bounded revision).
+                || result.getUsage().size() > task.getMaxToolCalls() * 2 + 4) {
             throw new IllegalArgumentException("AI result exceeds task bounds");
         }
         Set<String> sourceRefs = new HashSet<>();
