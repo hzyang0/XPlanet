@@ -227,7 +227,7 @@ xplanet/
 └── docs/
     ├── ARCHITECTURE.md
     ├── BEGINNER-GUIDE.md
-    ├── INTERVIEW-GUIDE.md
+    ├── INTERVIEW-GUIDE.md / XPlanet-Research-秋招面试八股手册.docx
     ├── DEMO-GUIDE.md
     ├── XPlanet-秋招版最终方案.md
     ├── EXPERIMENTS.md
