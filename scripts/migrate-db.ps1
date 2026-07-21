@@ -4,8 +4,8 @@
   使用 Flyway 将当前 MySQL 数据库迁移到仓库版本。
 
 .DESCRIPTION
-  现有 V4 数据库首次执行时建立 Flyway baseline；后续从 V5 开始自动执行版本迁移。
-  新数据卷会先执行 sql/init.sql，因此同样从 V4 baseline 开始。
+  空数据库从 V4 baseline migration 开始创建完整结构；现有 V4 数据库首次执行时
+  建立 Flyway baseline，随后统一执行 V5+ 增量迁移。
 #>
 param(
     [string]$MysqlHost = "localhost",

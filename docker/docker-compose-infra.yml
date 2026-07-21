@@ -22,7 +22,6 @@ services:
     ports:
       - "3306:3306"
     volumes:
-      - ../sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - xp-mysql-data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot123"]

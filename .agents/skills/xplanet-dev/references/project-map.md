@@ -107,12 +107,12 @@ Protected write flows require a token from `POST /api/user/login`. Verify the co
 - Autumn recruiting implementation target: `docs/XPlanet-秋招版最终方案.md` is the sole authoritative roadmap; `docs/ARCHITECTURE.md` remains the current runnable v2 description.
 - Beginner onboarding: `docs/BEGINNER-GUIDE.md` -> Gateway config/filters -> one controller-to-database request flow.
 - Architecture: root `pom.xml` -> module POMs -> `docs/ARCHITECTURE.md` -> application entrypoints and configs.
-- Persistence: `sql/init.sql` -> entity -> mapper/XML -> service transaction boundary.
+- Persistence: `sql/migrations/V004__baseline_schema.sql` plus later Flyway migrations -> entity -> mapper/XML -> service transaction boundary.
 - Cache: article update/delete transaction -> cache-invalidation Outbox relay -> MQ invalidation consumer -> L1/L2 cache manager.
 - Likes: interaction validates the active article through typed OpenFeign -> state transition + Outbox transaction -> leased relay -> RocketMQ -> unique delta inbox -> transactional batch projection.
 - Authentication: Gateway first-layer validation -> user login -> token utility/interceptor in common -> protected controller and resource ownership check.
 - AI: task transaction + Outbox -> RocketMQ -> Java consumer -> Python planner/decision/search-fetch/evidence loop -> Claim writer -> structured Critic -> at most one supplemental search -> checkpoint/progress/result -> review -> OpenFeign article publish.
-- Performance: benchmark scripts and claims -> implementation/configuration -> fresh measurements. Never repeat benchmark numbers without reproducing or clearly labeling their source.
+- Performance: there is no current end-to-end capacity baseline. Do not claim QPS, peak-shaving ratios, or production SLA without a fresh multi-user test of the full Outbox/MQ/projection path.
 
 ## Current verification caveats
 

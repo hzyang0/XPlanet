@@ -1,123 +1,88 @@
-# 可复现实验记录
+# 当前可复现实验
 
-本文只记录实际执行过的验证及其边界。所有耗时均为本地快照，不代表生产容量或线上 SLA。
+> 只保留最终架构的验收记录。所有数字都是 2026-07-21 本机离线快照，不代表生产 SLA 或真实联网事实正确率。
 
-## 2026-07-20：动态 Agent 与 Claim Support 离线评测
-
-### 条件
-
-- Provider：`offline-demo`，不调用外部模型或搜索；
-- 数据集：`xplanet-agent/eval/golden_dataset.jsonl`，10 条固定技术问题；
-- 环境：Windows、Python 3.12、单进程本地执行；
-- 命令：
+## 1. Agent 离线质量评测
 
 ```powershell
-.\.venv\Scripts\python.exe -m xplanet_agent.evaluation --dataset xplanet-agent/eval/golden_dataset.jsonl
+.\.venv\Scripts\python.exe -m xplanet_agent.evaluation `
+  --dataset xplanet-agent\eval\golden_dataset.jsonl `
+  --output docs\evaluation-results.json
 ```
-
-### 结果
-
-| 指标 | 本次结果 | 能说明什么 |
-|---|---:|---|
-| Dataset Size | 10 | 本轮固定案例数量 |
-| Task Success Rate | 100% | 工作流完成，来源/证据数量未越界 |
-| Citation Index Validity Rate | 100% | citation 引用的 `evidenceRef` 均存在 |
-| Claim Support Rate | 100% | 每个 Claim 至少有一个 citation 的确定性词面支持分不低于 0.55 |
-| Average Latency | 16.511 ms | 当前机器上含动态循环、Writer 和 Critic 的离线图执行快照 |
-| P95 Latency | 19.951 ms | 当前机器上含动态循环、Writer 和 Critic 的离线图执行快照 |
-
-限制：数据集规模小，离线 Writer 直接使用固定证据内容形成 Claim，因此 100% 只用于防止编排、预算、错误引用和明显词面不支持回归，不是语义 Judge 分数或事实正确率。真实网页质量、模型成本、网络延迟和 Prompt 注入未被这组数字覆盖。
-
-Python 共 25 项测试，新增覆盖 Evidence 片段 SHA-256、Claim 缺证据、未知 Evidence 引用、结构化冲突披露，以及 Critic 最多一次定向补研究后强制收敛。Java 结果落库测试同时验证片段哈希契约、引用写入失败不会推进任务状态，`complete` 方法的事务边界保证真实数据库写入整体回滚。
-
-## 2026-07-20：工具 checkpoint 崩溃恢复
-
-### 条件
-
-- 全 Docker 环境：MySQL、Redis、RocketMQ、Gateway、4 个业务 Java 服务和 Python Agent；
-- 故障点：首个 `EXECUTE_TOOL` 结果 checkpoint 已经成功写入 MySQL 后，Agent 进程执行 `os._exit(17)`；
-- 故障开关：检测到首次退出后立即关闭，只注入一次故障，避免人为耗尽 3 次业务重试预算；
-- 恢复机制：容器自动重启，RocketMQ 未确认消息重投，工作流读取 checkpoint 后从 `EVIDENCE_BUILDER` 继续；
-- 命令：
-
-```powershell
-.\scripts\test-agent-recovery.ps1
-```
-
-### 结果
-
-| 证据 | 本次结果 |
-|---|---:|
-| Task ID | 47 |
-| Completed Checkpoint Steps | 15 |
-| Completed Tool Steps | 3（等于任务预算，无额外重复） |
-| Run Attempts | 2 |
-| Task Version | 4 |
-| Final State | `WAITING_REVIEW` |
-
-结论只覆盖一次确定性故障注入：已完成的 Search 工具结果没有在恢复时重跑，后续 2 个工具和报告节点完成并进入人工审核。它不是高并发恢复率或长期稳定性测试。
-
-## 2026-07-20：Gateway 全链路验收
-
-### 条件
-
-- Docker 模式只向宿主机发布 Gateway 8080，业务服务 8081～8084 和 Agent 8000 只在容器网络可达；
-- 所有登录、文章、点赞和 AI 请求均通过 Gateway；
-- 使用 `offline-demo` Agent，不调用外部模型；
-- 命令：`./scripts/smoke-test.ps1`。
-
-### 结果
-
-| 验证项 | 本次结果 |
-|---|---|
-| Gateway 健康和 4 条路由 | 通过 |
-| CORS OPTIONS 预检 | HTTP 200，允许配置的 Origin |
-| 无 Token 写请求 | HTTP 401 / 业务码 2001 |
-| 请求与响应 `X-Trace-Id` | 通过 |
-| 文章、缓存 Outbox、点赞幂等和持久化计数 | 通过 |
-| AI 动态循环 | 5 次工具、6 次决策、21 个 schema v3 checkpoint、26 条 SSE 进度 |
-| Claim/Evidence/Critic、片段哈希、审核和幂等发布 | 通过，Task ID 48，发布 Article ID 120 |
-
-此结果证明本机这套 Compose 中组件可以协同工作，不代表生产高可用、安全攻防或容量结论。Gateway 当前完成入口级 TraceId；服务日志 MDC、Feign 和 MQ 的完整 Trace 上下文仍是后续项。
-
-## 可选 OpenAI Tools Provider
-
-`openai-tools` 已通过 `httpx.MockTransport` 覆盖结构化 Planner、动态 Decision、Writer、Critic、单次 Hosted Web Search、内部鉴权头、来源/工具/Token 边界以及用量返回。`HttpDocumentFetcher` 单测覆盖私网 DNS、私网重定向、危险端口、二进制内容和超大响应。当前环境没有真实 API Key，也没有产生外部模型费用，因此不记录真实联网质量、成本或延迟数字。
-
-启用前应单独建立经批准的在线数据集，记录 Provider/模型、Prompt 版本、完整费用、限流与错误分布，并增加 Claim—Evidence 语义支持验证。
-
-## 2026-07-21：站内知识回流验收
-
-### 条件
-
-- MySQL 从 Flyway V008 迁移到 V009，`article(title, content)` 使用 ngram FULLTEXT；
-- 固定数据集 `xplanet-agent/eval/internal_recall.jsonl` 共 5 条，每条标注期望文章 ID；
-- Agent 通过内部 Token 调用 Article，而不是直接连接 Article 数据库；
-- 命令：`./scripts/test-internal-recall.ps1` 与 `./scripts/smoke-test.ps1`。
-
-### 结果
 
 | 指标 | 结果 |
 |---|---:|
-| Internal Recall@5 | 100%（5/5，门槛 80%） |
-| checkpoint schema | v4 |
-| 发布后再召回 | Task 50 发布 Article 121；Task 51 召回成功 |
-| 工具预算 | 第二个任务 `maxToolCalls=1`，仅使用一次 `internal_search` |
+| Dataset Size | 30 |
+| Task Success | 100% |
+| Citation Index Validity | 100% |
+| Deterministic Lexical Claim Support | 100% |
+| Average Latency | 17.851 ms |
+| P95 Latency | 21.539 ms |
+| External Input/Output Token | 0 / 0 |
+| External Cost | 0 |
 
-该结果证明已发布文章能够在同一系统内回流成后续研究证据。数据集很小且 FULLTEXT 以词法匹配为主，因此不能宣称具备向量语义召回能力；将来可以替换 `InternalSearchProvider` 的实现而不改变 Agent Action 契约。
+离线 Provider 使用固定语料，不调用外部模型。该实验验证工作流、预算、Evidence 身份和 Citation 结构回归，不验证实时网页质量或语义事实正确率。完整逐题结果见 [`evaluation-results.json`](evaluation-results.json)。
 
-## 2026-07-21：秋招版最终验收
+## 2. 站内知识召回
 
-| 验证项 | 结果 |
-|---|---|
-| Java / Python 单元测试 | 105 / 28 项通过 |
-| 离线质量评测 | 30/30 完成；Citation 与词面 Claim Support 均为 100% |
-| 离线延迟 | 平均 17.851 ms，P95 21.539 ms |
-| 离线 Token / 成本 | 0 / 0；未调用外部模型 |
-| Internal Recall@5 | 100%（5/5） |
-| MQ 暂停恢复 | Task 53：暂停时 Outbox `0:1`，恢复后已发送并进入 `WAITING_REVIEW` |
-| checkpoint 强退恢复 | Task 54：2 次 attempt、3 个工具步骤，最终 `WAITING_REVIEW` |
-| 最终 Docker smoke | Task 55 幂等发布 Article 122；Task 56 站内召回成功 |
-| 浏览器 E2E | Alice 登录、时间线、Evidence/Citation、Critic 和发布入口通过；控制台 0 error/0 warning |
+```powershell
+.\scripts\test-internal-recall.ps1
+```
 
-上述结果证明本机离线演示闭环和故障脚本可复现，不外推真实联网答案质量、生产 SLA 或中间件高可用。
+条件：MySQL V009 ngram FULLTEXT、5 条带期望文章 ID 的标注查询、TopK=5。结果为 Recall@5 100%（5/5），门槛为 80%。
+
+该结果只证明当前中文/技术词法查询能够召回种子文章，不等于向量语义检索。新文章无需复制到第二个事实库，发布后即可进入索引。
+
+## 3. checkpoint 强退恢复
+
+```powershell
+$env:TOKEN_SECRET="<与容器一致>"
+$env:AGENT_INTERNAL_TOKEN="<与容器一致>"
+.\scripts\test-agent-recovery.ps1
+```
+
+在首个 `EXECUTE_TOOL` schema v4 checkpoint 持久化后执行真实进程退出。RocketMQ 重投后第二次 attempt 从下一节点继续，最终进入 `WAITING_REVIEW`；最近一次复测包含 15 个 checkpoint、3 个工具步骤，没有额外重复。
+
+最终代码只恢复 schema v4。数据库检查时没有 `QUEUED/RUNNING` 的 v1～v3 任务，因此已删除开发阶段兼容分支。
+
+## 4. RocketMQ 暂停恢复
+
+```powershell
+.\scripts\test-ai-mq-pause.ps1
+```
+
+Broker 停止时，AI Outbox 保持待发送并记录失败次数；Broker 恢复后 Relay 自动补发，Outbox 变为已发送，任务进入 `WAITING_REVIEW`。脚本使用 `finally` 保证 Broker 被恢复。
+
+## 5. Docker 全链路 smoke
+
+```powershell
+.\scripts\smoke-test.ps1
+```
+
+最终记录：
+
+- Gateway health、CORS、TraceId 和未登录拦截通过；
+- 相同 Idempotency-Key 创建任务返回同一 Task；
+- Source/Evidence/Citation、片段哈希、Critic 和模型用量契约通过；
+- 同一报告审核并重复发布返回同一 Article，证明发布幂等；
+- 后续任务只用一次 `internal_search` 召回刚发布的 Article；
+- 不存在文章点赞被拒绝；重复点赞、MQ 消费和持久化计数投影幂等；
+- 文章变更的立即/延迟缓存失效 Outbox 均发送；
+- 测试结束后原点赞关系与文章计数恢复。
+
+## 6. 浏览器 E2E
+
+使用 Playwright 驱动 Edge 访问 `http://127.0.0.1:4173`：
+
+- Alice 登录并进入私有研究空间；
+- 任务列表、节点时间线、质量分、来源、Evidence、Citation 和 Critic 正常显示；
+- 站内文章显示为 `published internal article` Evidence；
+- 人工审核发布入口可见；
+- 浏览器控制台 0 error / 0 warning。
+
+## 7. 未验收项
+
+- 没有真实 OpenAI API Key 和成本授权，因此 `openai-tools` 只完成 MockTransport 契约测试；
+- 没有当前 Outbox/MQ/投影全链路的多用户容量压测，因此不宣称 QPS、削峰倍数或生产 SLA；
+- MySQL、Redis、RocketMQ 为单机演示环境，不代表中间件高可用；
+- Claim Support 是确定性词面门禁，不替代人工或模型语义 Judge。

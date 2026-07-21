@@ -220,6 +220,6 @@ POST /api/ai/tasks
 
 - 本地混合模式通过 `scripts/setup-infra.ps1` 启动中间件，RocketMQ broker 广播宿主机地址，Java 服务在 IDE 或本机 JVM 中运行；
 - 全 Docker 模式通过 `scripts/start-docker.ps1` 切换 broker 容器地址、执行 Flyway、构建五个 Java 应用和一个 Python Agent 镜像并等待健康；宿主机只暴露 Gateway 8080；
-- `sql/init.sql` 负责新数据卷的当前完整结构，Flyway 对历史数据库建立 V4 baseline，V005～V008 逐步增加 AI 控制面、幂等发布、checkpoint 和 Evidence 哈希，V009 增加文章 ngram FULLTEXT；以后继续追加版本脚本；
+- 数据库只有 Flyway 一条结构来源：空库执行 V004 完整 baseline，已有 V4 结构但没有迁移历史的数据库会自动记为 baseline；两者随后统一执行 V005～V009。以后只追加版本脚本，不回写旧迁移；
 - 两种模式共用固定 `xplanet-net` 网络，但分别使用 `broker-host.conf` 和 `broker-docker.conf`，避免 broker 把客户端无法访问的地址注册到 NameServer；
 - 当前执行 Java/Python 单元测试、固定离线评测和 5 条站内召回评测；真实 MySQL/Redis/RocketMQ/Gateway/Agent 行为由 `scripts/smoke-test.ps1`、`scripts/test-agent-recovery.ps1` 与 `scripts/test-internal-recall.ps1` 验证。

@@ -80,8 +80,7 @@ xplanet/
 ├─ xplanet-common/                 Java 公共能力
 ├─ xplanet-api/                    跨模块数据契约
 ├─ xplanet-web/                    无需 Node 的研究工作台（HTML/CSS/原生 JS）
-├─ sql/init.sql                    新数据库的完整结构
-├─ sql/migrations/                 历史数据库增量迁移
+├─ sql/migrations/                 V004 完整基线 + 后续增量迁移
 ├─ docker/                         Dockerfile 和 Compose
 ├─ scripts/                        启动、迁移、smoke、故障测试
 └─ docs/                           架构、实验和入门文档

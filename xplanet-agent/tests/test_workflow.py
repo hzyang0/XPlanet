@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from pydantic import ValidationError
@@ -152,6 +154,25 @@ def test_workflow_resumes_after_persisted_checkpoint_without_repeating_nodes() -
     assert sink.saved_nodes.count("PLANNER") == 1
     assert sink.saved_nodes.count("EXECUTE_TOOL") == retry_command.maxToolCalls
     assert sink.saved_nodes[-1] == "FINALIZE"
+
+
+def test_workflow_rejects_pre_cutover_checkpoint_schema() -> None:
+    sink = RecordingSink()
+    retry_command = command(maxSources=1, maxToolCalls=1)
+
+    def stop_after_first_node(node: str) -> None:
+        if node == "VALIDATE_INPUT":
+            raise RuntimeError("stop after checkpoint")
+
+    with pytest.raises(RuntimeError, match="stop after checkpoint"):
+        ResearchWorkflow(after_checkpoint=stop_after_first_node).run(retry_command, sink)
+
+    payload = json.loads(sink.checkpoint or "{}")
+    payload["schemaVersion"] = 3
+    sink.checkpoint = json.dumps(payload)
+
+    with pytest.raises(ValueError, match="only checkpoint schema version 4"):
+        ResearchWorkflow().run(retry_command, sink)
 
 
 class RepeatingDecisionProvider(OfflineModelProvider):

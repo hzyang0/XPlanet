@@ -102,7 +102,7 @@ Docker Compose 用户可复制 `.env.example` 为 `.env` 后替换其中的示�
 
 脚本会启动 MySQL(3306)、Redis(6379)、RocketMQ(namesrv 9876 + broker 10911)，
 选择供宿主机 JVM 使用的 broker 广播地址，等待 MySQL 就绪并执行 Flyway。
-当前完整表结构以 V004 为 baseline，V005～V008 增加 AI 控制面、幂等发布、持久化 checkpoint 和 Evidence 哈希，V009 增加文章全文索引；后续迁移会自动按顺序执行，无需手工修改数据库。
+数据库结构只有一条 Flyway 演进路径：空库执行 V004 创建社区基础结构，现有 V4 库首次接入时自动建立 baseline；两者随后统一执行 V005～V009，增加 AI 控制面、幂等发布、持久化 checkpoint、Evidence 哈希和文章全文索引。后续只追加迁移，无需手工改库。
 
 #### 2. 编译
 
@@ -201,11 +201,6 @@ $env:TOKEN_SECRET="replace-with-a-random-secret-at-least-32-bytes"
 若所在网络无法访问 Docker Hub，可临时通过参数或 `DOCKER_BASE_REGISTRY` 指定兼容镜像前缀；
 仓库默认值仍为官方 `docker.io/library`，避免把特定镜像站写死到项目中。
 
-## 性能测试
-
-见 [`benchmark/README.md`](benchmark/README.md) 与 [`docs/benchmark-results.md`](docs/benchmark-results.md)。
-请用 wrk 脚本自测并填入真实数据,不要引用未经验证的数字。
-
 ## 项目结构
 
 ```
@@ -226,20 +221,18 @@ xplanet/
 │   ├── Dockerfile.app
 │   ├── broker-host.conf           # 宿主机 JVM 使用的 broker 广播地址
 │   └── broker-docker.conf         # 容器应用使用的 broker 广播地址
-├── sql/
-│   ├── init.sql                   # 新数据卷完整结构
-│   └── migrations/                # Flyway 增量迁移
+├── sql/migrations/          # V004 完整基线 + V005～V009 增量迁移
 ├── scripts/                 # 构建、迁移、启动、端到端与故障恢复测试
 ├── .github/workflows/ci.yml # 单测、Compose 与脚本语法检查
-├── benchmark/               # wrk 压测脚本
 └── docs/
     ├── ARCHITECTURE.md
     ├── BEGINNER-GUIDE.md
     ├── INTERVIEW-GUIDE.md
     ├── DEMO-GUIDE.md
-    ├── evaluation-results.md
+    ├── XPlanet-秋招版最终方案.md
     ├── EXPERIMENTS.md
-    └── benchmark-results.md
+    ├── evaluation-results.md / .json
+    └── HA-AND-DEGRADE.md
 ```
 
 ## 已知取舍(面试可主动展开)
@@ -250,6 +243,7 @@ xplanet/
 - 登录使用 Spring PasswordEncoder 校验 bcrypt 哈希；演示账号共用初始密码，仅用于本地数据
 - 点赞以 `like_relation` 为事实源,通过 Outbox 至少一次投递；消费端唯一事件表和事务批量投影吸收重复并支持崩溃恢复
 - AI 已完成离线确定性闭环、持久化 checkpoint、崩溃恢复、有限重试、Claim–Evidence–Critic 和 MySQL 站内检索；联网 Provider 尚未用真实密钥验收，离线词面支持率和站内召回率不能替代联网事实核验，完整可观测平台仍是后续项
+- 当前没有针对 Outbox + MQ + 持久化投影完整链路的有效容量压测，因此不宣称 QPS、削峰倍数或生产 SLA
 
 这些是有意识的取舍,不是不知道,面试时可展开聊改造方案。
 

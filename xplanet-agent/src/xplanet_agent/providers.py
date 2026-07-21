@@ -474,7 +474,7 @@ class OpenAIModelProvider:
 class OpenAIHostedSearchProvider:
     """One bounded hosted web-search call that returns candidates, not a prewritten report."""
 
-    name = "openai-web-search"
+    name = "openai-hosted-search"
 
     def __init__(
         self,

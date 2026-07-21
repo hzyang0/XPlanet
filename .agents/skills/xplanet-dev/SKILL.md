@@ -19,7 +19,7 @@ Work from the repository root. Read `references/project-map.md` before the first
 1. Start with the root `pom.xml`, then the target module `pom.xml` and `application.yml`.
 2. Trace HTTP requests from controller through service, mapper, Redis/cache, RocketMQ, and database boundaries.
 3. For shared behavior, inspect `xplanet-common`; for cross-service DTOs, inspect `xplanet-api`.
-4. Read `sql/init.sql` before changing persistence assumptions.
+4. Read `sql/migrations/V004__baseline_schema.sql` and every later migration before changing persistence assumptions.
 5. Use `docs/ARCHITECTURE.md` and `docs/HA-AND-DEGRADE.md` as design intent, but verify claims against current code.
 
 ## 3. Diagnose before changing

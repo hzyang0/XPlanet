@@ -789,17 +789,11 @@ class ResearchWorkflow:
         if payload.get("commandHash") != command_hash:
             raise ValueError("checkpoint does not belong to this task command")
         schema_version = payload.get("schemaVersion")
-        if schema_version == 1:
-            return self._restore_legacy_checkpoint(payload, command_hash)
-        if schema_version not in {2, 3, 4}:
-            raise ValueError("unsupported checkpoint schema version")
+        if schema_version != 4:
+            raise ValueError("only checkpoint schema version 4 is supported")
         target = payload.get("nextNode")
         if not isinstance(target, str):
             raise ValueError("checkpoint has no resume target")
-        if schema_version == 2 and target in {"critic", "finalize"}:
-            # Phase 2 drafts had citations but no explicit Claim objects or structured review.
-            # Re-enter the writer so a resumed run cannot bypass the new quality contract.
-            target = "writer"
         restored: ResearchState = {
             "resume_target": target,
             "deadline_at": float(payload["deadlineAt"]),
@@ -814,7 +808,9 @@ class ResearchWorkflow:
             "decision_count": int(payload.get("decisionCount") or 0),
             "research_complete": bool(payload.get("researchComplete")),
             "sources": [SourceResult.model_validate(item) for item in payload.get("sources") or []],
-            "evidence": self._restore_evidence(payload.get("evidence") or []),
+            "evidence": [
+                EvidenceResult.model_validate(item) for item in payload.get("evidence") or []
+            ],
             "claims": [ClaimDraft.model_validate(item) for item in payload.get("claims") or []],
             "citations": [
                 CitationResult.model_validate(item) for item in payload.get("citations") or []
@@ -849,50 +845,6 @@ class ResearchWorkflow:
             value = payload.get(source_name)
             if value is not None:
                 restored[state_name] = value  # type: ignore[literal-required]
-        return restored
-
-    @staticmethod
-    def _restore_evidence(items: list[dict[str, Any]]) -> list[EvidenceResult]:
-        restored = []
-        for raw in items:
-            value = dict(raw)
-            if not value.get("contentHash") and isinstance(value.get("content"), str):
-                value["contentHash"] = hashlib.sha256(value["content"].encode("utf-8")).hexdigest()
-            restored.append(EvidenceResult.model_validate(value))
-        return restored
-
-    def _restore_legacy_checkpoint(
-        self, payload: dict[str, Any], command_hash: str
-    ) -> ResearchState:
-        # Schema v1 represented a fixed one-shot research node. Restart at the
-        # planner so partially completed legacy state cannot bypass the new tool loop.
-        restored: ResearchState = {
-            "resume_target": "planner" if payload.get("question") else "validate_input",
-            "deadline_at": float(payload["deadlineAt"]),
-            "command_hash": command_hash,
-            "search_hits": [],
-            "documents": [],
-            "attempted_queries": [],
-            "attempted_internal_queries": [],
-            "attempted_urls": [],
-            "decision_count": 0,
-            "research_complete": False,
-            "sources": [],
-            "evidence": [],
-            "claims": [],
-            "citations": [],
-            "revisions": 0,
-            "tool_calls": 0,
-            "needs_revision": False,
-            "critic_next": "finalize",
-            "evidence_next": "decide_action",
-            "supplemental_count": 0,
-            "supplemental_pending": False,
-            "provider_name": self.provider_name,
-            "usage": [],
-        }
-        if payload.get("question"):
-            restored["question"] = payload["question"]
         return restored
 
     @staticmethod

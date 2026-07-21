@@ -10,7 +10,6 @@
 **/target
 logs
 docker/data
-benchmark
 docs
 xplanet-web
 *.log
