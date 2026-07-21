@@ -38,7 +38,7 @@ def _build_workflow() -> ResearchWorkflow:
             internal_search_provider=internal_search,
             after_checkpoint=_optional_crash_after_checkpoint,
         )
-    elif provider_name in {"openai-tools", "openai-web"}:
+    elif provider_name == "openai-tools":
         api_key = os.getenv("OPENAI_API_KEY", "")
         model = os.getenv("OPENAI_MODEL", "gpt-5.6-terra")
         base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")

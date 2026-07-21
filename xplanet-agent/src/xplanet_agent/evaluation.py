@@ -28,6 +28,9 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
 def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
     results = []
     latencies = []
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_estimated_cost = 0.0
     for index, case in enumerate(cases, start=1):
         started = time.perf_counter()
         try:
@@ -44,6 +47,12 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
                 deadlineSeconds=case.get("deadlineSeconds", 60),
             )
             report = ResearchWorkflow().run(command)
+            case_input_tokens = sum(item.inputTokens for item in report.usage)
+            case_output_tokens = sum(item.outputTokens for item in report.usage)
+            case_estimated_cost = sum(item.estimatedCost for item in report.usage)
+            total_input_tokens += case_input_tokens
+            total_output_tokens += case_output_tokens
+            total_estimated_cost += case_estimated_cost
             source_refs = {source.sourceRef for source in report.sources}
             evidence_refs = {item.evidenceRef for item in report.evidence}
             cited_refs = {item.evidenceRef for item in report.citations}
@@ -82,6 +91,9 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
                 "claimCount": len(claim_scores),
                 "claimSupportRate": round(claim_support_rate, 4),
                 "structuralQualityScore": report.qualityScore,
+                "inputTokens": case_input_tokens,
+                "outputTokens": case_output_tokens,
+                "estimatedCost": round(case_estimated_cost, 8),
             }
         except Exception as exc:
             result = {"id": case.get("id", str(index)), "success": False, "error": str(exc)}
@@ -103,6 +115,10 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
         "claimSupportRate": round(sum(measured_support) / max(1, len(measured_support)), 4),
         "claimSupportThreshold": 0.55,
         "claimSupportMethod": "deterministic lexical guardrail; live semantic samples require human audit",
+        "totalInputTokens": total_input_tokens,
+        "totalOutputTokens": total_output_tokens,
+        "estimatedCost": round(total_estimated_cost, 8),
+        "usageNote": "offline-demo performs no external model calls; token and cost totals are therefore zero",
         "averageLatencyMs": round(sum(latencies) / len(latencies), 3),
         "p95LatencyMs": round(ordered[p95_index], 3),
         "cases": results,
@@ -112,9 +128,14 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run deterministic XPlanet Agent evaluation")
     parser.add_argument("--dataset", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     summary = evaluate_cases(load_cases(args.dataset))
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    rendered = json.dumps(summary, ensure_ascii=False, indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(rendered + "\n", encoding="utf-8")
+    print(rendered)
     return 0 if summary["successRate"] == 1 and summary["citationIndexValidityRate"] == 1 else 1
 
 

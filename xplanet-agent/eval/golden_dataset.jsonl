@@ -8,3 +8,23 @@
 {"id":"human-review","question":"为什么发布 AI 报告前需要人工审核和幂等键？","maxSources":4,"maxToolCalls":6,"minSources":4}
 {"id":"java-python-boundary","question":"Java 控制面与 Python Agent 执行面应该如何划分？","maxSources":3,"maxToolCalls":5,"minSources":3}
 {"id":"checkpoint-recovery","question":"节点 checkpoint 如何避免失败重试时重复执行已完成工具？","maxSources":2,"maxToolCalls":4,"minSources":2}
+{"id":"critic-loop","question":"Agent 的 Critic 为什么必须限制补研究次数？","maxSources":3,"maxToolCalls":5,"minSources":3}
+{"id":"claim-evidence","question":"Claim、Evidence 和 Citation 三者应该如何建模？","maxSources":3,"maxToolCalls":5,"minSources":3}
+{"id":"evidence-hash","question":"保存证据片段哈希能解决哪些可追溯性问题？","maxSources":2,"maxToolCalls":4,"minSources":2}
+{"id":"internal-search","question":"站内知识检索如何融入 Agent 工具循环？","maxSources":3,"maxToolCalls":5,"minSources":3}
+{"id":"fulltext-choice","question":"小规模知识社区为什么可以先选择 MySQL FULLTEXT？","maxSources":2,"maxToolCalls":4,"minSources":2}
+{"id":"vector-evolution","question":"如何让全文检索未来平滑替换为向量检索？","maxSources":3,"maxToolCalls":5,"minSources":3}
+{"id":"gateway-boundary","question":"Gateway 统一入口后下游为什么仍需独立鉴权？","maxSources":3,"maxToolCalls":5,"minSources":3}
+{"id":"trace-id","question":"微服务请求中的 TraceId 应该如何生成和传播？","maxSources":2,"maxToolCalls":4,"minSources":2}
+{"id":"ssrf-defense","question":"Agent 抓取网页时如何防御 SSRF 和恶意重定向？","maxSources":4,"maxToolCalls":6,"minSources":4}
+{"id":"tool-schema","question":"为什么 Agent 工具参数需要严格 Schema 校验？","maxSources":2,"maxToolCalls":4,"minSources":2}
+{"id":"deadline-budget","question":"长任务如何同时约束截止时间、工具和 Token 预算？","maxSources":3,"maxToolCalls":5,"minSources":3}
+{"id":"outbox-backoff","question":"Outbox Relay 失败重试为什么需要退避和租约？","maxSources":3,"maxToolCalls":5,"minSources":3}
+{"id":"cache-breakdown","question":"热点缓存重建如何避免缓存击穿？","maxSources":2,"maxToolCalls":4,"minSources":2}
+{"id":"cache-invalidation","question":"多实例二级缓存如何可靠传播失效事件？","maxSources":4,"maxToolCalls":6,"minSources":4}
+{"id":"like-dedup","question":"点赞请求 actionId 去重与消费者 eventId 去重有什么区别？","maxSources":3,"maxToolCalls":5,"minSources":3}
+{"id":"delta-merge","question":"点赞计数为什么先累积 delta 再批量合并到文章表？","maxSources":3,"maxToolCalls":5,"minSources":3}
+{"id":"mq-pause","question":"RocketMQ 暂停后任务怎样保证恢复而不是丢失？","maxSources":2,"maxToolCalls":4,"minSources":2}
+{"id":"transaction-rollback","question":"AI 报告、证据和引用落库为什么必须在同一事务？","maxSources":4,"maxToolCalls":6,"minSources":4}
+{"id":"service-discovery","question":"什么规模下才值得为微服务引入注册中心？","maxSources":2,"maxToolCalls":4,"minSources":2}
+{"id":"evaluation-limits","question":"离线 Agent 评测的 100% 支持率为什么不等于事实正确率？","maxSources":3,"maxToolCalls":5,"minSources":3}

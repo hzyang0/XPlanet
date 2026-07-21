@@ -19,3 +19,7 @@ def test_evaluation_separates_index_integrity_from_lexical_claim_support() -> No
     assert summary["claimSupportRate"] == 1
     assert summary["claimSupportThreshold"] == 0.55
     assert "human audit" in summary["claimSupportMethod"]
+    assert summary["totalInputTokens"] == 0
+    assert summary["totalOutputTokens"] == 0
+    assert summary["estimatedCost"] == 0
+    assert "offline-demo" in summary["usageNote"]
