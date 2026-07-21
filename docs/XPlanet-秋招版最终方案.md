@@ -653,6 +653,16 @@ xplanet-web/
 - 评测指标达到本文门槛；
 - README 中所有“已实现”均可由代码、测试或实验结果证明。
 
+验收记录（2026-07-21）：
+
+- 数据集扩展到 30 题，并同时输出 `docs/evaluation-results.json` 与 Markdown 摘要；完成率、Citation 索引有效率、词面 Claim Support 均为 100%；
+- 最终离线快照平均 17.851 ms、P95 21.539 ms；`offline-demo` 不调用外部模型，因此 Token 与成本均为 0；
+- Java 105 项、Python 28 项、Internal Recall@5 5/5、脚本语法和 Compose 配置全部通过；
+- MQ 暂停测试 Task 53 证明 Outbox 在 Broker 恢复后补发；强退恢复 Task 54 证明已完成工具不重复；
+- 最终 smoke 的 Task 55 幂等发布 Article 122，Task 56 成功召回；重复任务、发布、取消、点赞和缓存事件均通过；
+- Playwright 浏览器 E2E 验证登录、任务时间线、Evidence/Citation、Critic 和发布入口，控制台 0 error/0 warning；
+- 移除旧 `openai-web` 别名和临时 Playwright 产物，新增评测、演示与面试文档。真实联网语义质量仍需有密钥和成本授权后单独验收。
+
 ## 11. 每阶段 Git 规则
 
 每阶段严格按以下顺序：
@@ -757,6 +767,6 @@ docs: finalize demo and interview evidence
 | Phase 2 动态工具循环 | 已完成（live 质量待有密钥时验收） | 动态决策、工具边界、预算、去重和恢复通过 |
 | Phase 3 Evidence/Critic | 已完成（live 语义质量待有密钥时验收） | Claim Support 可评测并有单次补研究 |
 | Phase 4 站内知识检索 | 已完成 | 发布内容可被检索，Internal Recall@5 为 100% |
-| Phase 5 评测与发布 | 待实施 | 全量验收、真实数据、文档与演示完成 |
+| Phase 5 评测与发布 | 已完成（live 联网质量待有密钥时验收） | 全量验收、真实数据、文档与演示完成 |
 
-后续实施从 **Phase 5：评测、可靠性和发布收口** 开始。
+秋招版 Phase 0～5 已全部完成；后续只做有数据支撑的可选增强，不再扩张主架构。

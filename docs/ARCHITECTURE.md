@@ -193,7 +193,7 @@ POST /api/ai/tasks
 - 报告发布先持久化 `APPROVED`，文章服务暂时失败时可由用户重试；
 - `ai_published_article.report_id` 唯一，重复审核或网络重试返回同一 `article_id`；
 - 默认 Agent 是离线确定性提供器，只证明工作流结构与可靠性，不证明实时搜索或模型答案质量；
-- 可选 `openai-tools`（兼容 `openai-web` 配置名）把 Responses API 的结构化 Planner/Decision/Writer/Critic 与 Hosted Web Search 拆开；当前通过 MockTransport 验证契约，未用真实密钥做联网质量验收；
+- 可选 `openai-tools` 把 Responses API 的结构化 Planner/Decision/Writer/Critic 与 Hosted Web Search 拆开；当前通过 MockTransport 验证契约，未用真实密钥做联网质量验收；
 - `web_fetch` 只允许搜索候选 URL，并逐跳限制 HTTP(S)、80/443、公网 DNS、重定向、内容类型、大小和超时；生产环境仍应增加 egress proxy，应用层检查不能完全消除 DNS rebinding 竞态。
 
 ### 5.3 评测与可观测性

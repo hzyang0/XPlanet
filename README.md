@@ -2,7 +2,7 @@
 
 > 面向开发者的可追溯研究与社区平台：高并发社区底座、Agent 工作流、人工审核和幂等发布已形成首个可运行闭环。
 
-> **演进说明（2026-07-21）**：当前已完成秋招版 Phase 1～4：Research Workspace、有界动态工具循环、Claim–Evidence–Critic 质量闭环和最小站内知识检索；后续只按 [秋招版最终方案](docs/XPlanet-秋招版最终方案.md) 完成评测与发布收口。目标能力在完成验收前不会描述为已实现。
+> **演进说明（2026-07-21）**：秋招版 Phase 0～5 已完成：Research Workspace、有界动态工具循环、Claim–Evidence–Critic、站内知识回流、30 题评测和故障恢复均有可复现证据。真实 OpenAI/Web Search 质量仍需在明确提供密钥和成本授权后单独验收。
 
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.18-brightgreen.svg)](https://spring.io/projects/spring-boot)
@@ -45,7 +45,7 @@
 - **评测与指标**：固定 JSONL 数据集离线评测结构成功率、引用索引有效性和确定性词面 Claim Support；Micrometer 暴露执行结果、节点耗时和 checkpoint 指标
 - **Human-in-the-loop**：报告必须由任务所有者确认，随后通过内部 OpenFeign 调用幂等发布为文章；重复确认返回同一文章
 
-> 默认 `offline-demo` 用于零成本、可复现验收；另提供显式启用的 `openai-tools`（兼容旧配置名 `openai-web`），通过 Responses API 分别完成结构化规划/决策/写作和 Hosted Web Search。真实路径需要 API Key，目前只完成 MockTransport 契约测试，不能把离线评测结果描述为联网回答质量或事实正确率。
+> 默认 `offline-demo` 用于零成本、可复现验收；另提供显式启用的 `openai-tools`，通过 Responses API 分别完成结构化规划/决策/写作和 Hosted Web Search。真实路径需要 API Key，目前只完成 MockTransport 契约测试，不能把离线评测结果描述为联网回答质量或事实正确率。
 
 > 已引入轻量 Spring Cloud Gateway 作为统一外部入口；注册中心、分布式事务和监控全家桶仍按业务规模暂不引入。
 > 高可用(集群/哨兵/多实例)作为演进方向写在 [`docs/HA-AND-DEGRADE.md`](docs/HA-AND-DEGRADE.md),按需扩展。
@@ -64,7 +64,7 @@
  RocketMQ ←── 可靠异步命令 ────────────┴──────────────────┘
 ```
 
-第一次接触项目请先读 [`docs/BEGINNER-GUIDE.md`](docs/BEGINNER-GUIDE.md)，架构细节见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+第一次接触项目请先读 [`docs/BEGINNER-GUIDE.md`](docs/BEGINNER-GUIDE.md)，架构细节见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)，面试前看 [`docs/INTERVIEW-GUIDE.md`](docs/INTERVIEW-GUIDE.md) 与 [`docs/DEMO-GUIDE.md`](docs/DEMO-GUIDE.md)。
 
 ## 模块说明
 
@@ -235,6 +235,9 @@ xplanet/
 └── docs/
     ├── ARCHITECTURE.md
     ├── BEGINNER-GUIDE.md
+    ├── INTERVIEW-GUIDE.md
+    ├── DEMO-GUIDE.md
+    ├── evaluation-results.md
     ├── EXPERIMENTS.md
     └── benchmark-results.md
 ```

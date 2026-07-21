@@ -335,7 +335,7 @@ Agent 节点：
 | Validate Input | 校验问题和预算 | 清洗后的问题 |
 | Planner | 模型生成结构化研究步骤 | plan |
 | Decide Action | 根据计划、现有证据和剩余预算选择下一动作 | action、决策次数 |
-| Execute Tool | 执行 `web_search` 或 `web_fetch` | 工具结果、工具次数、模型用量 |
+| Execute Tool | 执行 `internal_search`、`web_search` 或 `web_fetch` | 工具结果、工具次数、模型用量 |
 | Evidence Builder | 去重来源，把搜索摘要/抓取正文绑定为证据并计算片段 SHA-256 | sources、evidence |
 | Writer | 输出显式 Claim，且每个 Claim 至少绑定一个已存在 Evidence | title、content、claims、citations |
 | Critic | 结构化检查缺证据、错误引用、冲突与不确定项 | quality score、issues、可选补研究 query |
@@ -344,6 +344,20 @@ Agent 节点：
 Critic 不是无限“自我反思”：第一次发现关键缺口时，只有工具预算尚未耗尽才允许执行一次定向 `web_search`；补研究后重写并再审一次，无论结果如何都进入人工审核。这样既保留 Agent 自主修复亮点，也避免成本和循环次数失控。
 
 这里的三层关系要分清：`Source` 是网页身份与整份内容哈希，`Evidence` 是可定位片段及片段哈希，`Claim` 是报告中的明确论点；`Citation` 只负责把 Claim 和 Evidence 连接起来。索引存在不代表事实正确，所以离线词面支持率只作为回归门禁，最终仍保留 Critic 披露和人工审核。
+
+站内知识回流流程：
+
+```text
+用户审核报告
+  → AI 通过 OpenFeign 幂等发布 Article
+  → 文章立即进入 MySQL FULLTEXT
+  → 后续 Agent 选择 internal_search
+  → Python 带 X-Agent-Token 调 Article 内部 TopK 接口
+  → 文章片段转换为 Source + Evidence
+  → 与 Web Evidence 一起进入 Writer 和 Critic
+```
+
+为什么 Python 不直接查 MySQL：Article 服务拥有文章规则，例如删除状态、TopK 上限和未来的检索实现；通过稳定 Provider/HTTP 契约，未来把 FULLTEXT 换成向量检索时 Agent 工作流不需要改。为什么当前不直接上向量库：5 条标注集的 Recall@5 已达到 100%，现阶段额外基础设施没有可量化收益。
 
 重点源码：
 

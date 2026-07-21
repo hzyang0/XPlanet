@@ -82,7 +82,7 @@ Python 共 25 项测试，新增覆盖 Evidence 片段 SHA-256、Claim 缺证据
 
 ## 可选 OpenAI Tools Provider
 
-`openai-tools`（兼容旧环境值 `openai-web`）已通过 `httpx.MockTransport` 覆盖结构化 Planner、动态 Decision、Writer、Critic、单次 Hosted Web Search、内部鉴权头、来源/工具/Token 边界以及用量返回。`HttpDocumentFetcher` 单测覆盖私网 DNS、私网重定向、危险端口、二进制内容和超大响应。当前环境没有真实 API Key，也没有产生外部模型费用，因此不记录真实联网质量、成本或延迟数字。
+`openai-tools` 已通过 `httpx.MockTransport` 覆盖结构化 Planner、动态 Decision、Writer、Critic、单次 Hosted Web Search、内部鉴权头、来源/工具/Token 边界以及用量返回。`HttpDocumentFetcher` 单测覆盖私网 DNS、私网重定向、危险端口、二进制内容和超大响应。当前环境没有真实 API Key，也没有产生外部模型费用，因此不记录真实联网质量、成本或延迟数字。
 
 启用前应单独建立经批准的在线数据集，记录 Provider/模型、Prompt 版本、完整费用、限流与错误分布，并增加 Claim—Evidence 语义支持验证。
 
@@ -105,3 +105,19 @@ Python 共 25 项测试，新增覆盖 Evidence 片段 SHA-256、Claim 缺证据
 | 工具预算 | 第二个任务 `maxToolCalls=1`，仅使用一次 `internal_search` |
 
 该结果证明已发布文章能够在同一系统内回流成后续研究证据。数据集很小且 FULLTEXT 以词法匹配为主，因此不能宣称具备向量语义召回能力；将来可以替换 `InternalSearchProvider` 的实现而不改变 Agent Action 契约。
+
+## 2026-07-21：秋招版最终验收
+
+| 验证项 | 结果 |
+|---|---|
+| Java / Python 单元测试 | 105 / 28 项通过 |
+| 离线质量评测 | 30/30 完成；Citation 与词面 Claim Support 均为 100% |
+| 离线延迟 | 平均 17.851 ms，P95 21.539 ms |
+| 离线 Token / 成本 | 0 / 0；未调用外部模型 |
+| Internal Recall@5 | 100%（5/5） |
+| MQ 暂停恢复 | Task 53：暂停时 Outbox `0:1`，恢复后已发送并进入 `WAITING_REVIEW` |
+| checkpoint 强退恢复 | Task 54：2 次 attempt、3 个工具步骤，最终 `WAITING_REVIEW` |
+| 最终 Docker smoke | Task 55 幂等发布 Article 122；Task 56 站内召回成功 |
+| 浏览器 E2E | Alice 登录、时间线、Evidence/Citation、Critic 和发布入口通过；控制台 0 error/0 warning |
+
+上述结果证明本机离线演示闭环和故障脚本可复现，不外推真实联网答案质量、生产 SLA 或中间件高可用。
