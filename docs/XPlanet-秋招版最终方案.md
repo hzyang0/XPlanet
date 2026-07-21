@@ -620,6 +620,16 @@ xplanet-web/
 - Internal Recall@5 达到 80%；
 - 完整 smoke 证明新发布文章能被后续任务召回。
 
+验收记录（2026-07-21）：
+
+- Flyway V009 为 `article(title, content)` 增加 ngram FULLTEXT，迁移已在现有 V008 数据库执行成功；
+- Article 提供受 `X-Agent-Token` 保护的内部 TopK 接口，查询长度、TopK 上限和 `deleted = 0` 均有硬约束；
+- Agent 新增独立 `InternalSearchProvider` 与 `internal_search` Action，站内文章转换为 Source/Evidence 并进入同一 Writer/Critic 链路；
+- checkpoint 升级到 schema v4，保存已尝试的站内查询，同时兼容读取 v2/v3；
+- 5 条标注数据的 Internal Recall@5 为 100%（门槛 80%）；
+- Docker smoke 中 Task 50 发布 Article 121，后续 Task 51 在 `maxToolCalls=1` 时通过 `internal_search` 召回该文章；
+- Article 局部测试、Python 28 项测试、迁移、召回脚本和完整 smoke 均通过；真实向量语义召回不在本阶段声称范围内。
+
 ### Phase 5：评测、可靠性和发布收口
 
 目标：形成可以写进简历并现场复现的证据。
@@ -746,7 +756,7 @@ docs: finalize demo and interview evidence
 | Phase 1 Agent 工作台 | 已完成 | 浏览器完整演示当前链路 |
 | Phase 2 动态工具循环 | 已完成（live 质量待有密钥时验收） | 动态决策、工具边界、预算、去重和恢复通过 |
 | Phase 3 Evidence/Critic | 已完成（live 语义质量待有密钥时验收） | Claim Support 可评测并有单次补研究 |
-| Phase 4 站内知识检索 | 待实施 | 发布内容可被检索，Internal Recall@5 达标 |
+| Phase 4 站内知识检索 | 已完成 | 发布内容可被检索，Internal Recall@5 为 100% |
 | Phase 5 评测与发布 | 待实施 | 全量验收、真实数据、文档与演示完成 |
 
-后续实施从 **Phase 4：最小站内知识检索** 开始。
+后续实施从 **Phase 5：评测、可靠性和发布收口** 开始。

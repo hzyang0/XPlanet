@@ -3,12 +3,12 @@ from __future__ import annotations
 import ipaddress
 import socket
 from html.parser import HTMLParser
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 
-from .models import FetchedDocument, TaskCommand, ToolAction, ToolExecutionResult
+from .models import FetchedDocument, SearchHit, TaskCommand, ToolAction, ToolExecutionResult
 from .providers import OFFLINE_CORPUS, SearchProvider
 
 
@@ -16,6 +16,81 @@ class DocumentFetcher(Protocol):
     name: str
 
     def fetch(self, command: TaskCommand, action: ToolAction) -> FetchedDocument: ...
+
+
+class InternalSearchProvider(Protocol):
+    name: str
+
+    def search(self, command: TaskCommand, action: ToolAction, limit: int) -> ToolExecutionResult: ...
+
+
+class OfflineInternalSearchProvider:
+    name = "offline-internal"
+
+    def search(self, command: TaskCommand, action: ToolAction, limit: int) -> ToolExecutionResult:
+        query_terms = {term.lower() for term in (action.query or "").split() if len(term) > 2}
+
+        def rank(document: FetchedDocument) -> tuple[int, str]:
+            haystack = f"{document.title} {document.content}".lower()
+            return (-sum(term in haystack for term in query_terms), document.url)
+
+        hits = [
+            SearchHit(
+                url=f"http://localhost:8080/api/article/offline-{index}",
+                title=f"站内知识：{document.title}",
+                snippet=document.content,
+                sourceType="internal",
+            )
+            for index, document in enumerate(sorted(OFFLINE_CORPUS, key=rank)[:limit], start=1)
+        ]
+        return ToolExecutionResult(action=action, searchHits=hits)
+
+
+class HttpInternalSearchProvider:
+    name = "mysql-fulltext"
+
+    def __init__(
+        self,
+        base_url: str,
+        internal_token: str,
+        public_base_url: str = "http://localhost:8080",
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        if not internal_token:
+            raise ValueError("AGENT_INTERNAL_TOKEN is required for internal_search")
+        self._base_url = base_url.rstrip("/")
+        self._token = internal_token
+        self._public_base_url = public_base_url.rstrip("/")
+        self._transport = transport
+
+    def search(self, command: TaskCommand, action: ToolAction, limit: int) -> ToolExecutionResult:
+        timeout = min(float(command.deadlineSeconds), 10.0)
+        with httpx.Client(transport=self._transport, timeout=timeout) as client:
+            response = client.get(
+                f"{self._base_url}/internal/article/knowledge/search",
+                headers={"X-Agent-Token": self._token},
+                params={"query": action.query or "", "topK": min(max(1, limit), 10)},
+            )
+            response.raise_for_status()
+            body: dict[str, Any] = response.json()
+        if body.get("code") != 0 or not isinstance(body.get("data"), list):
+            raise ValueError("internal_search returned an invalid business response")
+        hits = []
+        for raw in body["data"]:
+            article_id = raw.get("articleId")
+            title = raw.get("title")
+            content = raw.get("content")
+            if not isinstance(article_id, int) or not isinstance(title, str) or not isinstance(content, str):
+                raise ValueError("internal_search returned an invalid article item")
+            hits.append(
+                SearchHit(
+                    url=f"{self._public_base_url}/api/article/{article_id}",
+                    title=title,
+                    snippet=content[:4000],
+                    sourceType="internal",
+                )
+            )
+        return ToolExecutionResult(action=action, searchHits=hits[:limit])
 
 
 class OfflineDocumentFetcher:
@@ -168,9 +243,15 @@ class HttpDocumentFetcher:
 
 
 class ToolRegistry:
-    def __init__(self, search_provider: SearchProvider, document_fetcher: DocumentFetcher) -> None:
+    def __init__(
+        self,
+        search_provider: SearchProvider,
+        document_fetcher: DocumentFetcher,
+        internal_search_provider: InternalSearchProvider | None = None,
+    ) -> None:
         self._search_provider = search_provider
         self._document_fetcher = document_fetcher
+        self._internal_search_provider = internal_search_provider or OfflineInternalSearchProvider()
 
     def execute(self, command: TaskCommand, action: ToolAction) -> ToolExecutionResult:
         if action.name == "web_search":
@@ -178,4 +259,8 @@ class ToolRegistry:
         if action.name == "web_fetch":
             document = self._document_fetcher.fetch(command, action)
             return ToolExecutionResult(action=action, document=document)
+        if action.name == "internal_search":
+            return self._internal_search_provider.search(
+                command, action, min(command.maxSources, 2)
+            )
         raise ValueError("finish_research is a control action and cannot be executed as a tool")

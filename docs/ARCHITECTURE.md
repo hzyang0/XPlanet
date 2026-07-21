@@ -1,6 +1,6 @@
 # 架构与关键设计
 
-> 本文描述当前可运行的后端，以及秋招版 Phase 1～3 的 Research Workspace、动态工具循环和 Claim–Evidence–Critic 质量闭环。后续目标、取舍和实施顺序只以 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 为准。
+> 本文描述当前可运行的后端，以及秋招版 Phase 1～4 的 Research Workspace、动态工具循环、Claim–Evidence–Critic 和站内知识回流。后续目标、取舍和实施顺序只以 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 为准。
 
 浏览器端现已从社区单页升级为三栏研究工作台：任务和预算位于左侧，LangGraph/SSE 节点时间线位于中间，来源、Evidence、Citation、模型用量和可编辑报告位于右侧；社区退为审核报告的发布与反馈入口。所有 API 和 SSE 仍只经过 Gateway。
 
@@ -210,7 +210,7 @@ POST /api/ai/tasks
 - 单机 Redis,没起集群/哨兵
 - article 通过 OpenFeign 调 user 服务；Gateway 已生成请求 TraceId，但服务日志/MQ/Feign 的完整上下文透传和熔断仍待完善
 - 没接配置中心 / 注册中心,服务地址写在配置里
-- AI 已完成动态工具循环、应用层 SSRF 防护、Claim–Evidence–Critic、单次补研究、checkpoint、故障恢复、基础评测和 Micrometer 指标；真实联网质量、人工/模型语义抽检、Prompt 注入纵深防护、网络层 egress 限制和站内检索尚未完成
+- AI 已完成动态工具循环、应用层 SSRF 防护、Claim–Evidence–Critic、单次补研究、checkpoint、故障恢复、MySQL 站内检索、基础评测和 Micrometer 指标；真实联网质量、人工/模型语义抽检、Prompt 注入纵深防护和网络层 egress 限制尚未完成
 
 **关于刻意不做的部分**:当前只引入了轻量 Gateway；注册中心、分布式事务和监控全家桶在这个业务规模下收益不足，没有引入。
 缓存一致性也没上 Canal binlog 兜底——社区场景下「双删 + MQ 广播」已足够,binlog 兜底是为不存在的问题加复杂度。
@@ -220,6 +220,6 @@ POST /api/ai/tasks
 
 - 本地混合模式通过 `scripts/setup-infra.ps1` 启动中间件，RocketMQ broker 广播宿主机地址，Java 服务在 IDE 或本机 JVM 中运行；
 - 全 Docker 模式通过 `scripts/start-docker.ps1` 切换 broker 容器地址、执行 Flyway、构建五个 Java 应用和一个 Python Agent 镜像并等待健康；宿主机只暴露 Gateway 8080；
-- `sql/init.sql` 负责新数据卷的当前完整结构，Flyway 对历史数据库建立 V4 baseline，V005 增加 AI 控制面，V006 增加 AI 报告—文章幂等发布投影，V007 增加运行步骤 checkpoint，V008 增加 Evidence 片段哈希；以后继续追加版本脚本；
+- `sql/init.sql` 负责新数据卷的当前完整结构，Flyway 对历史数据库建立 V4 baseline，V005～V008 逐步增加 AI 控制面、幂等发布、checkpoint 和 Evidence 哈希，V009 增加文章 ngram FULLTEXT；以后继续追加版本脚本；
 - 两种模式共用固定 `xplanet-net` 网络，但分别使用 `broker-host.conf` 和 `broker-docker.conf`，避免 broker 把客户端无法访问的地址注册到 NameServer；
-- 当前执行 100 项 Java 测试、25 项 Python Agent 测试和 10 条离线评测；真实 MySQL/Redis/RocketMQ/Gateway/Agent 行为由 `scripts/smoke-test.ps1` 与 `scripts/test-agent-recovery.ps1` 验证。
+- 当前执行 Java/Python 单元测试、固定离线评测和 5 条站内召回评测；真实 MySQL/Redis/RocketMQ/Gateway/Agent 行为由 `scripts/smoke-test.ps1`、`scripts/test-agent-recovery.ps1` 与 `scripts/test-internal-recall.ps1` 验证。

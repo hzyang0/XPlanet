@@ -85,3 +85,23 @@ Python 共 25 项测试，新增覆盖 Evidence 片段 SHA-256、Claim 缺证据
 `openai-tools`（兼容旧环境值 `openai-web`）已通过 `httpx.MockTransport` 覆盖结构化 Planner、动态 Decision、Writer、Critic、单次 Hosted Web Search、内部鉴权头、来源/工具/Token 边界以及用量返回。`HttpDocumentFetcher` 单测覆盖私网 DNS、私网重定向、危险端口、二进制内容和超大响应。当前环境没有真实 API Key，也没有产生外部模型费用，因此不记录真实联网质量、成本或延迟数字。
 
 启用前应单独建立经批准的在线数据集，记录 Provider/模型、Prompt 版本、完整费用、限流与错误分布，并增加 Claim—Evidence 语义支持验证。
+
+## 2026-07-21：站内知识回流验收
+
+### 条件
+
+- MySQL 从 Flyway V008 迁移到 V009，`article(title, content)` 使用 ngram FULLTEXT；
+- 固定数据集 `xplanet-agent/eval/internal_recall.jsonl` 共 5 条，每条标注期望文章 ID；
+- Agent 通过内部 Token 调用 Article，而不是直接连接 Article 数据库；
+- 命令：`./scripts/test-internal-recall.ps1` 与 `./scripts/smoke-test.ps1`。
+
+### 结果
+
+| 指标 | 结果 |
+|---|---:|
+| Internal Recall@5 | 100%（5/5，门槛 80%） |
+| checkpoint schema | v4 |
+| 发布后再召回 | Task 50 发布 Article 121；Task 51 召回成功 |
+| 工具预算 | 第二个任务 `maxToolCalls=1`，仅使用一次 `internal_search` |
+
+该结果证明已发布文章能够在同一系统内回流成后续研究证据。数据集很小且 FULLTEXT 以词法匹配为主，因此不能宣称具备向量语义召回能力；将来可以替换 `InternalSearchProvider` 的实现而不改变 Agent Action 契约。

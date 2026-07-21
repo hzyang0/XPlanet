@@ -28,7 +28,8 @@ CREATE TABLE `article` (
     `update_time` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     KEY `idx_author_id` (`author_id`),
-    KEY `idx_create_time` (`create_time`)
+    KEY `idx_create_time` (`create_time`),
+    FULLTEXT KEY `ft_article_knowledge` (`title`, `content`) WITH PARSER ngram
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文章表';
 
 DROP TABLE IF EXISTS `article_change_outbox`;

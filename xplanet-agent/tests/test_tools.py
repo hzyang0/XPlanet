@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from xplanet_agent.models import TaskCommand, ToolAction
-from xplanet_agent.tools import HttpDocumentFetcher
+from xplanet_agent.tools import HttpDocumentFetcher, HttpInternalSearchProvider
 
 
 def command() -> TaskCommand:
@@ -100,3 +100,57 @@ def test_http_fetcher_rejects_large_or_binary_responses() -> None:
     )
     with pytest.raises(ValueError, match="size limit"):
         large.fetch(command(), action("https://example.com/large"))
+
+
+def test_internal_search_uses_token_bound_topk_and_public_article_url() -> None:
+    captured = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": [
+                    {
+                        "articleId": 42,
+                        "title": "Checkpoint recovery",
+                        "content": "Persist tool results before advancing the graph.",
+                        "score": 1.2,
+                    }
+                ],
+            },
+        )
+
+    provider = HttpInternalSearchProvider(
+        base_url="http://article:8081",
+        internal_token="test-token",
+        public_base_url="http://localhost:8080",
+        transport=httpx.MockTransport(handler),
+    )
+    result = provider.search(
+        command(),
+        ToolAction(name="internal_search", query="checkpoint", reason="reuse knowledge"),
+        99,
+    )
+
+    assert captured[0].headers["x-agent-token"] == "test-token"
+    assert captured[0].url.params["topK"] == "10"
+    assert result.searchHits[0].sourceType == "internal"
+    assert result.searchHits[0].url == "http://localhost:8080/api/article/42"
+
+
+def test_internal_search_rejects_invalid_business_payload() -> None:
+    provider = HttpInternalSearchProvider(
+        base_url="http://article:8081",
+        internal_token="test-token",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"code": 4004, "data": None})
+        ),
+    )
+    with pytest.raises(ValueError, match="business response"):
+        provider.search(
+            command(),
+            ToolAction(name="internal_search", query="checkpoint", reason="reuse knowledge"),
+            5,
+        )

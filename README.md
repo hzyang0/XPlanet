@@ -2,7 +2,7 @@
 
 > 面向开发者的可追溯研究与社区平台：高并发社区底座、Agent 工作流、人工审核和幂等发布已形成首个可运行闭环。
 
-> **演进说明（2026-07-20）**：当前已完成秋招版 Phase 1 Research Workspace、Phase 2 有界动态工具循环和 Phase 3 Claim–Evidence–Critic 质量闭环；后续只按 [秋招版最终方案](docs/XPlanet-秋招版最终方案.md) 实施最小站内知识检索和评测收口。目标能力在完成验收前不会描述为已实现。
+> **演进说明（2026-07-21）**：当前已完成秋招版 Phase 1～4：Research Workspace、有界动态工具循环、Claim–Evidence–Critic 质量闭环和最小站内知识检索；后续只按 [秋招版最终方案](docs/XPlanet-秋招版最终方案.md) 完成评测与发布收口。目标能力在完成验收前不会描述为已实现。
 
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.18-brightgreen.svg)](https://spring.io/projects/spring-boot)
@@ -39,6 +39,7 @@
 - **有界动态 Agent 图**：`xplanet-agent` 用 LangGraph 让 Planner 和 `decide_action` 在预算内循环选择 `web_search`、`web_fetch` 或结束；查询/URL 去重，工具次数、来源数、Token 和总超时均有上限
 - **Claim–Evidence–Critic 闭环**：Writer 输出显式 Claim 与 Evidence 绑定，证据片段保存 SHA-256；结构化 Critic 检查缺证据、冲突和错误引用，并且最多触发一次定向补研究
 - **安全工具边界**：搜索只产生候选来源，抓取结果再升级证据；HTTP 抓取逐跳检查协议、端口、DNS 公网地址、重定向、内容类型和响应大小
+- **站内知识回流**：`internal_search` 通过内部 Token 调用 Article TopK 接口；MySQL FULLTEXT 只召回未删除文章，发布后的文章无需复制索引即可参与后续研究
 - **可恢复长任务**：每个节点把版本化 checkpoint 写入 MySQL，Agent 崩溃后由 RocketMQ 重投并从下一节点恢复，失败最多尝试 3 次后进入明确 `FAILED`
 - **证据与进度闭环**：来源、证据、引用和报告在同一事务校验落库；步骤进度写 Redis Stream，并由 `xplanet-ai` 通过 SSE 输出
 - **评测与指标**：固定 JSONL 数据集离线评测结构成功率、引用索引有效性和确定性词面 Claim Support；Micrometer 暴露执行结果、节点耗时和 checkpoint 指标
@@ -101,7 +102,7 @@ Docker Compose 用户可复制 `.env.example` 为 `.env` 后替换其中的示�
 
 脚本会启动 MySQL(3306)、Redis(6379)、RocketMQ(namesrv 9876 + broker 10911)，
 选择供宿主机 JVM 使用的 broker 广播地址，等待 MySQL 就绪并执行 Flyway。
-当前完整表结构以 V004 为 baseline，V005～V007 增加 AI 控制面、幂等发布和持久化 checkpoint；后续迁移会自动按顺序执行，无需手工修改数据库。
+当前完整表结构以 V004 为 baseline，V005～V008 增加 AI 控制面、幂等发布、持久化 checkpoint 和 Evidence 哈希，V009 增加文章全文索引；后续迁移会自动按顺序执行，无需手工修改数据库。
 
 #### 2. 编译
 
@@ -184,6 +185,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 
 ```powershell
 .\.venv\Scripts\python.exe -m xplanet_agent.evaluation --dataset xplanet-agent/eval/golden_dataset.jsonl
+.\scripts\test-internal-recall.ps1
 ```
 
 ### 方式二：全 Docker 模式（演示推荐）
@@ -244,7 +246,7 @@ xplanet/
 - Token 使用标准 JWT/JWS 库签发和校验，签名密钥通过 `TOKEN_SECRET` 外部注入
 - 登录使用 Spring PasswordEncoder 校验 bcrypt 哈希；演示账号共用初始密码，仅用于本地数据
 - 点赞以 `like_relation` 为事实源,通过 Outbox 至少一次投递；消费端唯一事件表和事务批量投影吸收重复并支持崩溃恢复
-- AI 已完成离线确定性闭环、持久化 checkpoint、崩溃恢复、有限重试、Claim–Evidence–Critic 和基础评测；联网 Provider 尚未用真实密钥验收，离线 100% 词面支持率不能替代联网事实核验，站内知识检索和完整可观测平台仍是后续项
+- AI 已完成离线确定性闭环、持久化 checkpoint、崩溃恢复、有限重试、Claim–Evidence–Critic 和 MySQL 站内检索；联网 Provider 尚未用真实密钥验收，离线词面支持率和站内召回率不能替代联网事实核验，完整可观测平台仍是后续项
 
 这些是有意识的取舍,不是不知道,面试时可展开聊改造方案。
 

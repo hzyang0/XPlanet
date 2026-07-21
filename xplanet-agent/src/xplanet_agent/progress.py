@@ -108,7 +108,7 @@ class HttpProgressSink:
             "runId": self._run_id,
             "node": node,
             "inputHash": input_hash,
-            "stateVersion": 3,
+            "stateVersion": 4,
             "stateJson": state_json,
             "durationMs": max(0, duration_ms),
         }

@@ -1,6 +1,6 @@
 # XPlanet 零基础入门与项目导读
 
-> 本文用于理解当前可运行的后端，以及 Phase 1～3 的 Research Workspace、动态工具循环和 Claim–Evidence–Critic 质量闭环。掌握当前链路后，再阅读 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 了解后续站内知识检索和评测收口。
+> 本文用于理解当前可运行的后端，以及 Phase 1～4 的 Research Workspace、动态工具循环、Claim–Evidence–Critic 和站内知识回流。掌握当前链路后，再阅读 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 了解评测与发布收口。
 
 > 适合第一次接触 Java 微服务、Redis、RocketMQ 和 Agent 的同学。建议不要一上来逐行读代码，先按本文把系统跑起来，再沿着一条请求追代码。
 
@@ -494,7 +494,7 @@ Gateway 拒绝时返回 HTTP 401，同时保留项目业务码：
 6. 点赞 Outbox Publisher、Consumer、Projection；
 7. `AiTaskController.java` 和 `AiTaskService.java`；
 8. AI Outbox、`AgentTaskConsumer`、`AgentTaskExecutionService`；
-9. Python `workflow.py`；
+9. Python `workflow.py`、`tools.py` 与 Article `search/`，理解 `internal_search` 如何把已发布文章变成 Evidence；
 10. checkpoint、结果落库、审核发布；
 11. 最后再看 Compose、Flyway 和 CI。
 
@@ -590,7 +590,7 @@ mvn -B -ntp clean test
 - 引用 ID 有效不代表证据一定在事实层面支持结论；
 - MySQL、Redis、RocketMQ 目前是本地单机；
 - 没有 Nacos、Seata、Dubbo 和 Kubernetes，因为当前规模没有对应需求；
-- 完整 TraceId MDC、语义引用验证、RAG、Grafana 和高可用是后续方向。
+- 完整 TraceId MDC、向量语义检索、Grafana 和高可用是后续方向；当前站内检索有意使用可测、零额外基础设施的 MySQL FULLTEXT。
 
 ## 18. 你接下来应该怎么学
 

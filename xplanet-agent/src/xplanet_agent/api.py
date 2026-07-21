@@ -9,7 +9,7 @@ from fastapi import FastAPI, Header, HTTPException
 from .models import ResearchResult, TaskCommand
 from .progress import HttpProgressSink
 from .providers import OpenAIHostedSearchProvider, OpenAIModelProvider
-from .tools import HttpDocumentFetcher
+from .tools import HttpDocumentFetcher, HttpInternalSearchProvider, OfflineInternalSearchProvider
 from .workflow import ResearchWorkflow, TaskCancelled
 
 app = FastAPI(title="XPlanet Agent", version="0.1.0")
@@ -23,8 +23,21 @@ def _optional_crash_after_checkpoint(node: str) -> None:
 
 def _build_workflow() -> ResearchWorkflow:
     provider_name = os.getenv("AGENT_PROVIDER", "offline-demo").strip().lower()
+    internal_token = os.getenv("AGENT_INTERNAL_TOKEN", "")
+    internal_search = (
+        HttpInternalSearchProvider(
+            base_url=os.getenv("ARTICLE_SERVICE_URL", "http://article:8081"),
+            internal_token=internal_token,
+            public_base_url=os.getenv("PUBLIC_GATEWAY_URL", "http://localhost:8080"),
+        )
+        if internal_token
+        else OfflineInternalSearchProvider()
+    )
     if provider_name == "offline-demo":
-        return ResearchWorkflow(after_checkpoint=_optional_crash_after_checkpoint)
+        return ResearchWorkflow(
+            internal_search_provider=internal_search,
+            after_checkpoint=_optional_crash_after_checkpoint,
+        )
     elif provider_name in {"openai-tools", "openai-web"}:
         api_key = os.getenv("OPENAI_API_KEY", "")
         model = os.getenv("OPENAI_MODEL", "gpt-5.6-terra")
@@ -39,6 +52,7 @@ def _build_workflow() -> ResearchWorkflow:
             model_provider=model_provider,
             search_provider=search_provider,
             document_fetcher=HttpDocumentFetcher(),
+            internal_search_provider=internal_search,
             after_checkpoint=_optional_crash_after_checkpoint,
         )
     else:

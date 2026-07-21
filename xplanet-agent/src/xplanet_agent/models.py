@@ -33,7 +33,7 @@ class ResearchPlan(BaseModel):
 
 
 class ToolAction(BaseModel):
-    name: Literal["web_search", "web_fetch", "finish_research"]
+    name: Literal["web_search", "web_fetch", "internal_search", "finish_research"]
     query: str | None = Field(default=None, max_length=300)
     url: str | None = Field(default=None, max_length=2048)
     reason: str = Field(min_length=1, max_length=500)
@@ -44,6 +44,8 @@ class ToolAction(BaseModel):
             raise ValueError("web_search requires query")
         if self.name == "web_fetch" and not (self.url or "").strip():
             raise ValueError("web_fetch requires url")
+        if self.name == "internal_search" and not (self.query or "").strip():
+            raise ValueError("internal_search requires query")
         if self.name == "finish_research" and (self.query or self.url):
             raise ValueError("finish_research does not accept query or url")
         return self
@@ -53,6 +55,7 @@ class SearchHit(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
     title: str = Field(min_length=1, max_length=500)
     snippet: str = Field(min_length=1, max_length=4000)
+    sourceType: Literal["web", "internal"] = "web"
 
 
 class FetchedDocument(BaseModel):

@@ -28,7 +28,13 @@ from .models import (
 from .progress import NullProgressSink, ProgressSink
 from .providers import ModelProvider, OfflineModelProvider, OfflineSearchProvider, SearchProvider
 from .quality import lexical_support_score
-from .tools import DocumentFetcher, OfflineDocumentFetcher, ToolRegistry
+from .tools import (
+    DocumentFetcher,
+    InternalSearchProvider,
+    OfflineDocumentFetcher,
+    OfflineInternalSearchProvider,
+    ToolRegistry,
+)
 
 
 class TaskCancelled(RuntimeError):
@@ -46,6 +52,7 @@ class ResearchState(TypedDict, total=False):
     search_hits: list[SearchHit]
     documents: list[FetchedDocument]
     attempted_queries: list[str]
+    attempted_internal_queries: list[str]
     attempted_urls: list[str]
     action: ToolAction
     tool_result: ToolExecutionResult | None
@@ -78,12 +85,14 @@ class ResearchWorkflow:
         model_provider: ModelProvider | None = None,
         search_provider: SearchProvider | None = None,
         document_fetcher: DocumentFetcher | None = None,
+        internal_search_provider: InternalSearchProvider | None = None,
         after_checkpoint: Callable[[str], None] | None = None,
     ) -> None:
         self._model = model_provider or OfflineModelProvider()
         self._tools = ToolRegistry(
             search_provider or OfflineSearchProvider(),
             document_fetcher or OfflineDocumentFetcher(),
+            internal_search_provider or OfflineInternalSearchProvider(),
         )
         self._after_checkpoint = after_checkpoint
 
@@ -121,6 +130,7 @@ class ResearchWorkflow:
             "search_hits": [],
             "documents": [],
             "attempted_queries": [],
+            "attempted_internal_queries": [],
             "attempted_urls": [],
             "decision_count": 0,
             "research_complete": False,
@@ -245,6 +255,7 @@ class ResearchWorkflow:
                 state.get("search_hits", []),
                 state.get("documents", []),
                 state.get("attempted_queries", []),
+                state.get("attempted_internal_queries", []),
                 state.get("attempted_urls", []),
                 state.get("tool_calls", 0),
             )
@@ -285,14 +296,30 @@ class ResearchWorkflow:
             if url in state.get("attempted_urls", []) or url not in known_urls:
                 return self._fallback_action(state)
             return action.model_copy(update={"url": url})
+        if action.name == "internal_search":
+            query = (action.query or "").strip()
+            if query in state.get("attempted_internal_queries", []):
+                return self._fallback_action(state)
+            return action.model_copy(update={"query": query})
         return action
 
     def _fallback_action(self, state: ResearchState) -> ToolAction:
         attempted_urls = set(state.get("attempted_urls", []))
         fetched_urls = {item.url for item in state.get("documents", [])}
         for hit in state.get("search_hits", [])[: state["command"].maxSources]:
-            if hit.url not in attempted_urls and hit.url not in fetched_urls:
+            if (
+                hit.sourceType == "web"
+                and hit.url not in attempted_urls
+                and hit.url not in fetched_urls
+            ):
                 return ToolAction(name="web_fetch", url=hit.url, reason="去重后读取下一个候选来源")
+        question = state["question"]
+        if question not in state.get("attempted_internal_queries", []):
+            return ToolAction(
+                name="internal_search",
+                query=question,
+                reason="去重后查询站内已发布知识",
+            )
         attempted_queries = set(state.get("attempted_queries", []))
         for step in state["plan"].steps:
             if step.searchQuery not in attempted_queries:
@@ -316,11 +343,14 @@ class ResearchWorkflow:
         )
         result = self._tools.execute(self._command_with_remaining_tokens(state), action)
         attempted_queries = list(state.get("attempted_queries", []))
+        attempted_internal_queries = list(state.get("attempted_internal_queries", []))
         attempted_urls = list(state.get("attempted_urls", []))
         if action.name == "web_search" and action.query not in attempted_queries:
             attempted_queries.append(action.query or "")
         if action.name == "web_fetch" and action.url not in attempted_urls:
             attempted_urls.append(action.url or "")
+        if action.name == "internal_search" and action.query not in attempted_internal_queries:
+            attempted_internal_queries.append(action.query or "")
         usage = list(state.get("usage", []))
         for item in result.usage:
             usage = self._append_usage({**state, "usage": usage}, item)
@@ -328,6 +358,7 @@ class ResearchWorkflow:
             "tool_result": result,
             "tool_calls": state.get("tool_calls", 0) + 1,
             "attempted_queries": attempted_queries,
+            "attempted_internal_queries": attempted_internal_queries,
             "attempted_urls": attempted_urls,
             "usage": usage,
         }
@@ -366,7 +397,7 @@ class ResearchWorkflow:
             [result.document] if result.document is not None else [],
         )
         sources, evidence = self._materialize_evidence(state["command"], search_hits, documents)
-        if not evidence:
+        if not evidence and result.action.name != "internal_search":
             raise ValueError("tool result did not produce usable evidence")
         next_node = "writer" if state.get("supplemental_pending", False) else "decide_action"
         updates: ResearchState = {
@@ -442,7 +473,13 @@ class ResearchWorkflow:
             evidence_ref = f"ev-{index}"
             metadata = json.dumps(
                 {
-                    "evidenceType": "fetched-document" if document else "search-snippet",
+                    "evidenceType": (
+                        "fetched-document"
+                        if document
+                        else "internal-article"
+                        if candidate.sourceType == "internal"
+                        else "search-snippet"
+                    ),
                     "semanticSupportVerified": bool(document),
                 },
                 ensure_ascii=False,
@@ -462,10 +499,16 @@ class ResearchWorkflow:
                 EvidenceResult(
                     evidenceRef=evidence_ref,
                     sourceRef=source_ref,
-                    locator="fetched document" if document else "web search snippet",
+                    locator=(
+                        "fetched document"
+                        if document
+                        else "published internal article"
+                        if candidate.sourceType == "internal"
+                        else "web search snippet"
+                    ),
                     content=content[:4000],
                     contentHash=hashlib.sha256(content[:4000].encode("utf-8")).hexdigest(),
-                    score=0.88 if document else 0.55,
+                    score=0.88 if document else 0.8 if candidate.sourceType == "internal" else 0.55,
                 )
             )
             if len(sources) >= command.maxSources:
@@ -700,7 +743,7 @@ class ResearchWorkflow:
         next_node: str,
     ) -> str:
         payload: dict[str, Any] = {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "commandHash": state["command_hash"],
             "completedNode": completed_node,
             "nextNode": next_node,
@@ -710,6 +753,7 @@ class ResearchWorkflow:
             "searchHits": [item.model_dump() for item in state.get("search_hits", [])],
             "documents": [item.model_dump() for item in state.get("documents", [])],
             "attemptedQueries": state.get("attempted_queries", []),
+            "attemptedInternalQueries": state.get("attempted_internal_queries", []),
             "attemptedUrls": state.get("attempted_urls", []),
             "action": state["action"].model_dump() if state.get("action") else None,
             "toolResult": state["tool_result"].model_dump() if state.get("tool_result") else None,
@@ -747,7 +791,7 @@ class ResearchWorkflow:
         schema_version = payload.get("schemaVersion")
         if schema_version == 1:
             return self._restore_legacy_checkpoint(payload, command_hash)
-        if schema_version not in {2, 3}:
+        if schema_version not in {2, 3, 4}:
             raise ValueError("unsupported checkpoint schema version")
         target = payload.get("nextNode")
         if not isinstance(target, str):
@@ -765,6 +809,7 @@ class ResearchWorkflow:
                 FetchedDocument.model_validate(item) for item in payload.get("documents") or []
             ],
             "attempted_queries": list(payload.get("attemptedQueries") or []),
+            "attempted_internal_queries": list(payload.get("attemptedInternalQueries") or []),
             "attempted_urls": list(payload.get("attemptedUrls") or []),
             "decision_count": int(payload.get("decisionCount") or 0),
             "research_complete": bool(payload.get("researchComplete")),
@@ -828,6 +873,7 @@ class ResearchWorkflow:
             "search_hits": [],
             "documents": [],
             "attempted_queries": [],
+            "attempted_internal_queries": [],
             "attempted_urls": [],
             "decision_count": 0,
             "research_complete": False,

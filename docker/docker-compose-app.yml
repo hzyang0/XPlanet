@@ -78,6 +78,8 @@ services:
     environment:
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN}
       AI_CONTROL_URL: http://ai:8084
+      ARTICLE_SERVICE_URL: http://article:8081
+      PUBLIC_GATEWAY_URL: ${PUBLIC_GATEWAY_URL:-http://localhost:8080}
       AGENT_CRASH_AFTER_NODE: ${AGENT_CRASH_AFTER_NODE:-}
       AGENT_PROVIDER: ${AGENT_PROVIDER:-offline-demo}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

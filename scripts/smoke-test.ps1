@@ -191,15 +191,15 @@ $decisionCheckpointCount = [long](Invoke-SqlScalar `
     "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND s.node_name='DECIDE_ACTION' AND s.status='COMPLETED';")
 $evidenceCheckpointCount = [long](Invoke-SqlScalar `
     "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND s.node_name='EVIDENCE_BUILDER' AND s.status='COMPLETED';")
-$schemaThreeCheckpointCount = [long](Invoke-SqlScalar `
-    "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND JSON_EXTRACT(s.checkpoint_json,'$.schemaVersion')=3;")
+$schemaFourCheckpointCount = [long](Invoke-SqlScalar `
+    "SELECT COUNT(*) FROM ai_run_step s JOIN ai_task t ON t.current_run_id=s.run_id WHERE t.id=$($aiCreated.data.id) AND JSON_EXTRACT(s.checkpoint_json,'$.schemaVersion')=4;")
 $expectedCheckpointCount = 6 + 3 * $toolCheckpointCount
 if ($toolCheckpointCount -lt 1 -or $toolCheckpointCount -gt 5 `
         -or $decisionCheckpointCount -ne $toolCheckpointCount + 1 `
         -or $evidenceCheckpointCount -ne $toolCheckpointCount `
         -or $checkpointCount -ne $expectedCheckpointCount `
-        -or $schemaThreeCheckpointCount -ne $checkpointCount) {
-    throw "Agent 动态 checkpoint 不完整：all=$checkpointCount, tools=$toolCheckpointCount, decisions=$decisionCheckpointCount, evidence=$evidenceCheckpointCount, schema3=$schemaThreeCheckpointCount"
+        -or $schemaFourCheckpointCount -ne $checkpointCount) {
+    throw "Agent 动态 checkpoint 不完整：all=$checkpointCount, tools=$toolCheckpointCount, decisions=$decisionCheckpointCount, evidence=$evidenceCheckpointCount, schema4=$schemaFourCheckpointCount"
 }
 if ($progressEventCount -lt $checkpointCount) {
     throw "Agent 进度事件不完整，events=$progressEventCount, checkpoints=$checkpointCount"
@@ -240,6 +240,33 @@ if ([long](Invoke-SqlScalar "SELECT COUNT(*) FROM ai_published_article WHERE rep
 }
 if ([long](Invoke-SqlScalar "SELECT COUNT(*) FROM ai_task WHERE user_id=$($login.data.userId) AND idempotency_key='$aiKey';") -ne 1) {
     throw "AI 任务幂等键没有约束为单行"
+}
+
+Write-Host ">>> 验证新发布文章可被后续 Agent 通过 internal_search 召回" -ForegroundColor Cyan
+$recallKey = "smoke-recall-$([Guid]::NewGuid().ToString('N'))"
+$recallHeaders = @{ Authorization = $headers.Authorization; "Idempotency-Key" = $recallKey }
+$recallBody = @{
+    question = "Explain the XPlanet Outbox reliability design"
+    maxSources = 5
+    maxToolCalls = 1
+    maxTokens = 3000
+    deadlineSeconds = 120
+} | ConvertTo-Json
+$recallCreated = Invoke-RestMethod -Method Post -Uri "$GatewayBaseUrl/api/ai/tasks" `
+    -Headers $recallHeaders -ContentType "application/json; charset=utf-8" -Body $recallBody -TimeoutSec 10
+Assert-BusinessSuccess $recallCreated "创建站内召回 AI 任务"
+Wait-Until {
+    (Invoke-RestMethod -Uri "$GatewayBaseUrl/api/ai/tasks/$($recallCreated.data.id)" `
+        -Headers $headers -TimeoutSec 10).data.status -eq "WAITING_REVIEW"
+} "internal_search 召回新发布文章并生成报告"
+$recallReport = Invoke-RestMethod `
+    -Uri "$GatewayBaseUrl/api/ai/tasks/$($recallCreated.data.id)/report" -Headers $headers -TimeoutSec 10
+Assert-BusinessSuccess $recallReport "读取站内召回报告"
+$publishedArticleRecalled = @($recallReport.data.sources | Where-Object {
+    $_.url -match "/api/article/$($approved.data.publishArticleId)$"
+}).Count -ge 1
+if (-not $publishedArticleRecalled) {
+    throw "internal_search 未召回刚发布的 Article $($approved.data.publishArticleId)"
 }
 
 Write-Host ">>> 验证 AI 取消命令和重复取消幂等" -ForegroundColor Cyan
@@ -423,6 +450,8 @@ if ($unauthenticated.code -ne 2001) {
     AiEvidenceCount = $aiReport.data.evidence.Count
     AiPublishedArticleId = $approved.data.publishArticleId
     AiPublishIdempotent = ($approved.data.publishArticleId -eq $approvedAgain.data.publishArticleId)
+    AiInternalRecallTaskId = $recallCreated.data.id
+    AiPublishedArticleRecalled = $publishedArticleRecalled
     AiTaskCancelled = ($aiCancelled.data.status -eq "CANCELLED")
 } | Format-List
 

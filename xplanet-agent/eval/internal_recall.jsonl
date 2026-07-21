@@ -1,0 +1,5 @@
+{"id":"cache-tier","query":"Caffeine Redis 二级缓存","expectedArticleIds":[1]}
+{"id":"rocketmq-batch","query":"RocketMQ 批量消费削峰","expectedArticleIds":[2]}
+{"id":"cache-aside","query":"Cache Aside 延迟双删","expectedArticleIds":[3]}
+{"id":"hot-key","query":"高并发缓存击穿 分布式锁","expectedArticleIds":[100]}
+{"id":"like-batch","query":"同一文章 点赞 update","expectedArticleIds":[2]}

@@ -88,6 +88,16 @@ def test_workflow_produces_traceable_report_with_bounded_sources() -> None:
     assert sum(1 for node, _, _ in sink.events if node == "TOOL_COMPLETED") == 2
 
 
+def test_workflow_reuses_internal_knowledge_within_the_shared_tool_budget() -> None:
+    sink = RecordingSink()
+
+    result = ResearchWorkflow().run(command(maxSources=2, maxToolCalls=1), sink)
+
+    assert all(source.url.startswith("http://localhost:8080/api/article/") for source in result.sources)
+    assert all(item.locator == "published internal article" for item in result.evidence)
+    assert sink.saved_nodes.count("EXECUTE_TOOL") == 1
+
+
 def test_workflow_obeys_cancellation_between_nodes() -> None:
     sink = RecordingSink(cancelled=True)
 
@@ -145,7 +155,7 @@ def test_workflow_resumes_after_persisted_checkpoint_without_repeating_nodes() -
 
 
 class RepeatingDecisionProvider(OfflineModelProvider):
-    def decide(self, command, question, plan, search_hits, documents, attempted_queries, attempted_urls, tool_calls):
+    def decide(self, command, question, plan, search_hits, documents, attempted_queries, attempted_internal_queries, attempted_urls, tool_calls):
         return ToolAction(name="web_search", query=plan.steps[0].searchQuery, reason="repeat"), None
 
 
@@ -174,7 +184,10 @@ class DuplicateSearchProvider:
 
 
 def test_workflow_deduplicates_search_urls_before_persisting_sources() -> None:
-    result = ResearchWorkflow(search_provider=DuplicateSearchProvider()).run(
+    result = ResearchWorkflow(
+        model_provider=RepeatingDecisionProvider(),
+        search_provider=DuplicateSearchProvider(),
+    ).run(
         command(maxSources=2, maxToolCalls=1), RecordingSink()
     )
 
@@ -186,7 +199,7 @@ class OneSupplementProvider(OfflineModelProvider):
     def __init__(self) -> None:
         self.critic_calls = 0
 
-    def decide(self, command, question, plan, search_hits, documents, attempted_queries, attempted_urls, tool_calls):
+    def decide(self, command, question, plan, search_hits, documents, attempted_queries, attempted_internal_queries, attempted_urls, tool_calls):
         if tool_calls == 0:
             return ToolAction(name="web_search", query=plan.steps[0].searchQuery, reason="initial"), None
         return ToolAction(name="finish_research", reason="critic decides whether more is needed"), None
