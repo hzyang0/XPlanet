@@ -2,7 +2,7 @@
 
 > 面向开发者的可追溯研究与社区平台：高并发社区底座、Agent 工作流、人工审核和幂等发布已形成首个可运行闭环。
 
-> **演进说明（2026-07-21）**：秋招版 Phase 0～5 已完成：Research Workspace、有界动态工具循环、Claim–Evidence–Critic、站内知识回流、30 题评测和故障恢复均有可复现证据。真实 OpenAI/Web Search 质量仍需在明确提供密钥和成本授权后单独验收。
+> **当前基线（2026-07-21）**：Research Workspace、有界动态工具循环、Claim–Evidence–Critic、站内知识回流、30 题评测和故障恢复均有可复现证据。真实 OpenAI/Web Search 质量仍需在明确提供密钥和成本授权后单独验收。
 
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.18-brightgreen.svg)](https://spring.io/projects/spring-boot)
@@ -10,40 +10,29 @@
 
 ## 项目定位
 
-社区类应用的真实瓶颈在于:**文章详情读多写少(热点读)** 和 **点赞瞬时高并发(热点写)**。
-本项目围绕这两个真实诉求做深,覆盖以下能力:
+**XPlanet Research 是面向开发者的可追溯研究 Agent 与知识社区。** 用户提交技术问题后，Agent 在预算内动态选择站内检索、Web 搜索和网页抓取，形成 Evidence、Claim 与 Citation；报告通过 Critic 检查和人工审核后幂等发布为文章，并立即回流到下一次站内检索。Agent 研究闭环是主线，Java/Spring 平台负责让任务、证据和发布副作用可靠运行。
 
-**缓存与一致性**
-- **Caffeine + Redis 二级缓存**:本地缓存挡热点读、降 Redis 网络开销;分布式缓存兜住多实例
-- **Cache Aside + 缓存失效 Outbox + MQ 广播**:DB 变更与立即/延迟失效事件同事务提交，支持故障恢复和多实例 L1/L2 失效
-- **三大问题防护**:空值缓存防穿透、分布式锁防击穿、TTL 随机防雪崩
-
-**高并发写**
-- **RocketMQ 削峰**:点赞写入异步化,消费端按文章聚合批量落库,削减 DB 写压力
-- **Transactional Outbox**:点赞关系事件和文章缓存失效事件均与业务状态同事务提交，MQ 不可用时可恢复重试
-- **持久化幂等投影**:eventId 唯一去重,按文章批量合并 delta,计数更新与事件完成标记同事务
-
-**并发控制与容错**
-- **Redisson 分布式锁**:缓存击穿时串行化重建,只放一个线程回源
-- **轻量限流**:注解 + Redis Lua 固定窗口,防接口被刷(比 Sentinel 轻、原理透明)
-- **服务降级**:user 服务故障返回兜底作者名、MQ 故障由 Outbox 退避重试、重建抢锁失败降级查库
-
-**服务协作与业务**
-- **服务间调用**:article 调 user 服务取作者名；interaction 点赞前轻量校验文章有效性，均配置显式超时
-- **文章列表分页 + 评论(两级嵌套)**:完整的社区业务闭环
-
-**AI 研究控制面（当前已实现）**
+**Agent 研究与证据闭环**
 - **Research Workspace**：无需 Node 构建即可运行的三栏工作台，覆盖登录、任务创建/列表/取消、带鉴权 SSE 重连、节点时间线、来源/Evidence/Citation、模型用量、报告编辑和人工发布
-- **任务状态与请求幂等**：`xplanet-ai` 管理私有研究任务、运行实例、预算上限和版本条件状态迁移
-- **可靠长任务命令**：任务/运行/Outbox 同事务提交，带租约 relay 向 RocketMQ 投递请求与取消命令
 - **有界动态 Agent 图**：`xplanet-agent` 用 LangGraph 让 Planner 和 `decide_action` 在预算内循环选择 `web_search`、`web_fetch` 或结束；查询/URL 去重，工具次数、来源数、Token 和总超时均有上限
 - **Claim–Evidence–Critic 闭环**：Writer 输出显式 Claim 与 Evidence 绑定，证据片段保存 SHA-256；结构化 Critic 检查缺证据、冲突和错误引用，并且最多触发一次定向补研究
 - **安全工具边界**：搜索只产生候选来源，抓取结果再升级证据；HTTP 抓取逐跳检查协议、端口、DNS 公网地址、重定向、内容类型和响应大小
 - **站内知识回流**：`internal_search` 通过内部 Token 调用 Article TopK 接口；MySQL FULLTEXT 只召回未删除文章，发布后的文章无需复制索引即可参与后续研究
+- **评测与指标**：固定 30 条 JSONL 数据集离线评测结构成功率、引用索引有效性和确定性词面 Claim Support；Micrometer 暴露执行结果、节点耗时和 checkpoint 指标
+
+**Java 控制面与可靠执行**
+- **任务状态与请求幂等**：`xplanet-ai` 管理私有研究任务、运行实例、预算上限和版本条件状态迁移
+- **可靠长任务命令**：任务/运行/Outbox 同事务提交，带租约 relay 向 RocketMQ 投递请求与取消命令
 - **可恢复长任务**：每个节点把版本化 checkpoint 写入 MySQL，Agent 崩溃后由 RocketMQ 重投并从下一节点恢复，失败最多尝试 3 次后进入明确 `FAILED`
 - **证据与进度闭环**：来源、证据、引用和报告在同一事务校验落库；步骤进度写 Redis Stream，并由 `xplanet-ai` 通过 SSE 输出
-- **评测与指标**：固定 JSONL 数据集离线评测结构成功率、引用索引有效性和确定性词面 Claim Support；Micrometer 暴露执行结果、节点耗时和 checkpoint 指标
 - **Human-in-the-loop**：报告必须由任务所有者确认，随后通过内部 OpenFeign 调用幂等发布为文章；重复确认返回同一文章
+
+**知识社区与高并发后端**
+- **Caffeine + Redis 二级缓存**：本地缓存承担热点读，Redis 支撑跨实例共享；空值缓存、分布式锁和 TTL 随机分别约束穿透、击穿和雪崩
+- **可靠缓存失效**：Cache Aside + 事务 Outbox + MQ 广播让数据库变更后的立即/延迟失效可恢复，并同步清理多实例 L1
+- **可靠点赞投影**：`like_relation` 是事实源，关系变更与 Outbox 同事务；消费端以 eventId 唯一去重，按文章合并 delta 并批量更新计数
+- **服务协作与降级**：OpenFeign 用于需要立即结果的短调用；user 服务故障返回兜底作者名，MQ 故障由 Outbox 退避重试，缓存重建抢锁失败直接回源
+- **完整社区闭环**：文章分页与详情、两级评论、点赞/取消、热榜，以及研究报告审核发布和知识回流
 
 > 默认 `offline-demo` 用于零成本、可复现验收；另提供显式启用的 `openai-tools`，通过 Responses API 分别完成结构化规划/决策/写作和 Hosted Web Search。真实路径需要 API Key，目前只完成 MockTransport 契约测试，不能把离线评测结果描述为联网回答质量或事实正确率。
 
@@ -53,24 +42,36 @@
 
 ## 架构
 
-```
- 用户/演示页 ──→ Gateway 8080 ─┬─→ Article 8081
-                               ├─→ Interaction 8082
-                               ├─→ User 8083
-                               └─→ AI 8084 ──HTTP──→ Agent 8000
-                                      │                  │
- MySQL ←── 业务事实/Outbox ────────────┤                  │
- Redis ←── 缓存/限流/进度流 ───────────┤                  │
- RocketMQ ←── 可靠异步命令 ────────────┴──────────────────┘
+```mermaid
+flowchart LR
+    B["浏览器工作台"] --> G["Gateway 8080"]
+    G --> U["User 8083"]
+    G --> AR["Article 8081"]
+    G --> IN["Interaction 8082"]
+    G --> AI["AI Control Plane 8084"]
+    AI -->|"Outbox 命令"| MQ["RocketMQ"]
+    IN -->|"点赞 Outbox"| MQ
+    AR -->|"缓存失效 Outbox"| MQ
+    MQ --> AIC["xplanet-ai Consumer"]
+    MQ --> ARC["xplanet-article Consumer"]
+    AIC -->|"内部 HTTP"| AG["LangGraph Agent 8000"]
+    AG -->|"internal_search"| AR
+    AI -->|"审核后 OpenFeign"| AR
+    U --> DB["MySQL"]
+    AR --> DB
+    IN --> DB
+    AI --> DB
+    AR --> R["Redis"]
+    AI --> R
 ```
 
-第一次接触项目请先读 [`docs/BEGINNER-GUIDE.md`](docs/BEGINNER-GUIDE.md)，架构细节见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)，面试前看 [`docs/INTERVIEW-GUIDE.md`](docs/INTERVIEW-GUIDE.md) 与 [`docs/DEMO-GUIDE.md`](docs/DEMO-GUIDE.md)。
+完整文档入口见 [`docs/README.md`](docs/README.md)。第一次接触项目建议先读 [`docs/BEGINNER-GUIDE.md`](docs/BEGINNER-GUIDE.md)，架构细节见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)，技术原理和快速巡检分别见 [`docs/TECHNICAL-GUIDE.md`](docs/TECHNICAL-GUIDE.md) 与 [`docs/VERIFICATION-GUIDE.md`](docs/VERIFICATION-GUIDE.md)。
 
 ## 模块说明
 
 | 模块 | 端口 | 职责 | 关键特性 |
 |---|---|---|---|
-| `xplanet-gateway` | 8080 | 统一外部入口 | **路由、CORS、TraceId、JWT 前置校验；Docker 模式唯一暴露端口** |
+| `xplanet-gateway` | 8080 | 统一外部入口 | **路由、CORS、TraceId、JWT 前置校验；Docker 模式中唯一暴露的应用端口** |
 | `xplanet-common` | - | 公共响应、异常、常量 | 全局异常处理、缓存 key 规范 |
 | `xplanet-api` | - | DTO / VO | 跨服务数据契约 |
 | `xplanet-article` | 8081 | 文章服务 | **二级缓存、延迟双删、批量消费点赞落库、列表分页、评论、限流、调用 user 服务** |
@@ -164,7 +165,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 ```
 
 推荐在仓库根目录执行 `python -m http.server 4173 --directory xplanet-web`，然后访问 `http://127.0.0.1:4173`；也可以直接打开 `xplanet-web/index.html`。先在顶部用用户名 `alice`/`bob` 登录，再进入研究工作台。
-本地初始化账号 `alice`、`bob`、`demo` 的演示密码均为 `password`，数据库中只保存 bcrypt 哈希。
+本地初始化账号 `alice`、`bob`、`demo` 的初始密码均为 `password`，数据库中只保存 bcrypt 哈希。
 
 全部服务与中间件都启动后，可执行可重复的端到端冒烟测试：
 
@@ -188,7 +189,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 .\scripts\test-internal-recall.ps1
 ```
 
-### 方式二：全 Docker 模式（演示推荐）
+### 方式二：全 Docker 模式（完整部署推荐）
 
 先设置密钥，然后一条命令完成基础设施启动、数据库迁移、应用镜像构建和健康检查：
 
@@ -214,7 +215,7 @@ xplanet/
 ├── xplanet-user/            # 用户服务
 ├── xplanet-ai/              # AI 任务控制面、SSE、审核和发布编排
 ├── xplanet-agent/           # Python LangGraph Agent 执行面
-├── xplanet-web/             # 演示前端
+├── xplanet-web/             # 静态研究工作台
 ├── docker/
 │   ├── docker-compose-infra.yml   # 中间件(本地混合模式用这个)
 │   ├── docker-compose-app.yml     # 全 Docker 模式(可选)
@@ -227,32 +228,33 @@ xplanet/
 └── docs/
     ├── ARCHITECTURE.md
     ├── BEGINNER-GUIDE.md
-    ├── INTERVIEW-GUIDE.md / XPlanet-Research-秋招面试八股手册.docx
-    ├── DEMO-GUIDE.md
-    ├── XPlanet-秋招版最终方案.md
+    ├── README.md
+    ├── TECHNICAL-GUIDE.md
+    ├── VERIFICATION-GUIDE.md
+    ├── CURRENT-SCOPE.md
     ├── EXPERIMENTS.md
     ├── evaluation-results.md / .json
     └── HA-AND-DEGRADE.md
 ```
 
-## 已知取舍(面试可主动展开)
+## 已知取舍
 
 - 中间件单机(Redis/MySQL/RocketMQ),未做集群/哨兵/主从——这是**高可用**演进项,
   与「应用可水平扩展」是两回事(应用层已按无状态多实例设计)。见 `docs/HA-AND-DEGRADE.md`
 - Token 使用标准 JWT/JWS 库签发和校验，签名密钥通过 `TOKEN_SECRET` 外部注入
-- 登录使用 Spring PasswordEncoder 校验 bcrypt 哈希；演示账号共用初始密码，仅用于本地数据
+- 登录使用 Spring PasswordEncoder 校验 bcrypt 哈希；本地初始化账号共用初始密码，仅用于本地数据
 - 点赞以 `like_relation` 为事实源,通过 Outbox 至少一次投递；消费端唯一事件表和事务批量投影吸收重复并支持崩溃恢复
 - AI 已完成离线确定性闭环、持久化 checkpoint、崩溃恢复、有限重试、Claim–Evidence–Critic 和 MySQL 站内检索；联网 Provider 尚未用真实密钥验收，离线词面支持率和站内召回率不能替代联网事实核验，完整可观测平台仍是后续项
 - 当前没有针对 Outbox + MQ + 持久化投影完整链路的有效容量压测，因此不宣称 QPS、削峰倍数或生产 SLA
 
-这些是有意识的取舍,不是不知道,面试时可展开聊改造方案。
+这些取舍均对应当前规模和已经验证的需求；演进路径见相关设计文档。
 
 ## 设计立场:可水平扩展 ≠ 高可用
 
 - **应用层**按「可水平扩展」设计:无状态(token 无状态、缓冲在 Redis)、L1 本地缓存 + MQ 广播
   保证多实例部署时本地缓存一致——这些是为水平扩展服务的,不是过度设计
 - **中间件高可用**(集群/哨兵)按需演进,当前单机够用
-- 二者是不同维度,本项目明确选择「应用可扩展 + 中间件暂单机」,演示跑单实例
+- 二者是不同维度，本项目明确选择「应用可扩展 + 中间件暂单机」，本地环境运行单实例
 
 ## License
 

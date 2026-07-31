@@ -1,12 +1,12 @@
-# XPlanet Research 秋招面试八股手册
+# XPlanet Research 技术原理与设计问答
 
-> 适用方向：Java 后端、AI Agent 应用开发、Java + AI 复合岗位。
+> 覆盖范围：Java 后端、AI Agent 应用开发，以及二者之间的工程协作。
 > 回答原则：先给结论，再讲本项目怎么做，然后解释取舍，最后说演进方向。
 > 本文只描述当前仓库已实现或明确标注为边界的能力。
 
 ## 1. 手册使用方法
 
-### 1.1 复习优先级
+### 1.1 阅读优先级
 
 | 优先级 | 要求 | 内容 |
 |---|---|---|
@@ -14,7 +14,7 @@
 | P1 | 追问时要会 | Gateway、OpenFeign/MQ、MySQL、Redis、RocketMQ、事务、索引、限流 |
 | P2 | 知道边界 | JVM、线程池、向量检索、多 Agent、Nacos、Seata、高可用 |
 
-### 1.2 四段式回答模板
+### 1.2 四段式设计分析模板
 
 1. 结论：一句话说明为什么这样选；
 2. 项目实现：说出真实模块、表或流程；
@@ -25,7 +25,7 @@
 
 > 为什么用 Outbox？因为创建任务时必须同时保证 MySQL 任务事实和 MQ 命令不丢。项目将 ai_task、ai_run 和 ai_outbox 放在同一本地事务，Relay 再投递 RocketMQ。它解决数据库成功但 MQ 发送失败的问题，但只能做到至少一次，所以消费端还要通过 Inbox、唯一键和 checkpoint 幂等。
 
-### 1.3 面试前 3 小时速记
+### 1.3 3 小时快速导读
 
 1. 30 分钟：30 秒和 2 分钟项目介绍；
 2. 50 分钟：Agent、Evidence、Critic、checkpoint；
@@ -36,7 +36,7 @@
 
 ---
 
-## 2. 项目介绍话术
+## 2. 系统概览
 
 ### 2.1 30 秒版本
 
@@ -377,7 +377,7 @@ member 存文章 ID，score 存热度，支持排序和 TopN。当前热度主�
 
 ### Q8：限流是什么方案？
 
-当前使用 Redis 固定窗口，适合演示和基础保护。窗口边界可能突刺；严格场景可用滑动窗口、令牌桶、漏桶或 Sentinel。
+当前使用 Redis 固定窗口提供基础保护。窗口边界可能突刺；严格场景可用滑动窗口、令牌桶、漏桶或 Sentinel。
 
 ### Q9：缓存为什么不能做事实源？
 
@@ -644,11 +644,11 @@ Java/Python测试、离线评测、Compose验证、脚本解析、依赖扫描�
 
 ### Q4：为什么没有 Kubernetes？
 
-当前是单机面试演示，没有真实多节点调度和弹性需求，Compose更容易复现。
+当前是单机可复现环境，没有真实多节点调度和弹性需求，Compose 更容易复现。
 
 ### Q5：有 Gateway 就是完整微服务吗？
 
-不是。还需要认证、数据所有权、事务边界、可靠异步、观测、测试和部署。当前是可运行秋招项目，不是生产平台。
+不是。还需要认证、数据所有权、事务边界、可靠异步、观测、测试和部署。当前是可运行工程基线，不是生产平台。
 
 ### Q6：最大困难是什么？P0
 
@@ -722,18 +722,18 @@ State记录查询和URL去重，工具数和deadline有硬上限。
 | 离线30/30代表真实准确率100% | 只证明离线结构回归 |
 | FULLTEXT是向量RAG | FULLTEXT是词法检索 |
 | 项目达到几万QPS | 当前没有完整容量基线 |
-| 中间件已高可用 | 当前是单机演示 |
+| 中间件已高可用 | 当前是本地单节点环境 |
 | 热榜已有真实浏览热度 | view_count尚无独立采集 |
 
 ---
 
-## 19. 简历表述
+## 19. 系统能力摘要
 
-### 19.1 项目标题
+### 19.1 系统名称
 
 XPlanet Research｜可追溯技术研究 Agent 与知识社区
 
-### 19.2 推荐描述
+### 19.2 核心能力
 
 - 基于 Java/Spring Boot 与 Python/LangGraph 构建可追溯研究 Agent，支持站内检索、Web搜索、网页抓取的动态工具循环，并以有界预算控制来源、工具、Token和deadline；
 - 设计 Source–Evidence–Claim–Citation 数据模型及 Critic 门禁，Evidence保存定位和SHA-256，错误引用由Python和Java事务双层校验；
@@ -743,7 +743,7 @@ XPlanet Research｜可追溯技术研究 Agent 与知识社区
 - 使用Caffeine + Redis二级缓存，以事务Outbox和MQ广播实现多实例可靠失效；
 - 建立Java/Python单测、30条离线评测、Recall@5、进程强退恢复及Docker全链路smoke。
 
-### 19.3 不推荐写法
+### 19.3 不成立的能力声明
 
 - 生产级高可用微服务平台；
 - 支持十万QPS；
@@ -753,7 +753,7 @@ XPlanet Research｜可追溯技术研究 Agent 与知识社区
 
 ---
 
-## 20. 连续追问训练
+## 20. 连续设计问题
 
 ### Agent追问链
 
@@ -773,10 +773,10 @@ XPlanet Research｜可追溯技术研究 Agent 与知识社区
 
 ---
 
-## 21. 最后一分钟检查表
+## 21. 学习自检清单
 
-- [ ] 30秒项目介绍；
-- [ ] 2分钟完整链路；
+- [ ] 一句话项目定位；
+- [ ] 一条完整主链路；
 - [ ] Agent与固定工作流；
 - [ ] Source/Evidence/Claim/Citation；
 - [ ] checkpoint与MQ幂等；
@@ -796,5 +796,5 @@ XPlanet Research｜可追溯技术研究 Agent 与知识社区
 - [架构设计](ARCHITECTURE.md)
 - [零基础入门](BEGINNER-GUIDE.md)
 - [实验与边界](EXPERIMENTS.md)
-- [最终方案](XPlanet-秋招版最终方案.md)
-- [演示路线](DEMO-GUIDE.md)
+- [当前系统范围](CURRENT-SCOPE.md)
+- [功能巡检](VERIFICATION-GUIDE.md)

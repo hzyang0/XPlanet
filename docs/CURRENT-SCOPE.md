@@ -1,4 +1,4 @@
-# XPlanet Research 秋招版最终方案
+# XPlanet Research 当前系统范围与设计基线
 
 > 本文只描述当前可运行基线，不保留实施阶段草案。
 
@@ -10,7 +10,7 @@
 
 Java/Spring 平台负责身份、任务事实、可靠消息、审核发布和社区互动；Python/LangGraph 负责 Agent 决策、工具、证据质量和评测。项目主线是 Agent 研究闭环，后端是保证闭环可靠运行的控制面。
 
-## 2. 当前最终架构
+## 2. 当前架构
 
 ```mermaid
 flowchart LR
@@ -32,7 +32,7 @@ flowchart LR
     AI -->|"审核后 OpenFeign"| ARTICLE
 ```
 
-外部只暴露 Gateway 8080。业务服务和 Agent 在 Docker 网络内通信；下游服务仍独立校验 JWT 或内部 Token，不把 Gateway 当作唯一安全边界。
+应用服务中只有 Gateway 8080 暴露到宿主机；MySQL、Redis 和 RocketMQ 端口仍为本地混合开发保留。其余业务服务和 Agent 在 Docker 网络内通信；下游服务仍独立校验 JWT 或内部 Token，不把 Gateway 当作唯一安全边界。
 
 ## 3. Agent 主流程
 
@@ -90,7 +90,7 @@ Validate Input
 - Seata：本地事务 + Outbox + 幂等已覆盖跨服务最终一致性；
 - 向量数据库：当前 5 条标注 Recall@5 已达 100%，尚无数据证明额外基础设施收益；
 - 多 Agent：当前瓶颈是证据质量和可靠恢复，不是角色数量；
-- Kubernetes/监控全家桶：单机面试演示没有对应运维需求。
+- Kubernetes/监控全家桶：当前单机可复现环境没有对应运维需求。
 
 ## 6. 当前可验证结果
 
@@ -119,8 +119,8 @@ Validate Input
 | 本文 | 最终范围、取舍和完成定义 |
 | `EXPERIMENTS.md` | 当前可复现实验和边界 |
 | `evaluation-results.md/json` | 评测摘要与机器结果 |
-| `INTERVIEW-GUIDE.md` | 简历亮点与高频问答 |
-| `DEMO-GUIDE.md` | 3～5 分钟演示路线 |
+| `TECHNICAL-GUIDE.md` | 技术原理、设计取舍与常见问题 |
+| `VERIFICATION-GUIDE.md` | 5 分钟功能巡检路线 |
 | `HA-AND-DEGRADE.md` | 明确标注的未来高可用演进 |
 
 ## 8. Definition of Done
@@ -133,11 +133,10 @@ Validate Input
 - 新发布文章能够被后续任务召回；
 - Java、Python、Compose、smoke 和浏览器 E2E 均通过；
 - 文档不引用旧架构 QPS、虚构准确率或未经授权的真实模型结果；
-- 当前阶段代码和文档均已 commit 并 push。
 
 ## 9. 后续变更原则
 
-秋招主版本不再扩张组件。只有数据证明当前瓶颈时才允许增加：
+当前基线不以组件数量为目标继续扩张。只有数据证明存在瓶颈时才增加：
 
 - 同义表达召回低于门槛时替换为 Embedding + 向量检索；
 - 可并行子任务显著降低延迟时增加有界 worker；

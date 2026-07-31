@@ -5,7 +5,8 @@
 
 .DESCRIPTION
   自动切换 RocketMQ 为容器网络广播地址、启动基础设施、执行数据库迁移、构建应用镜像，
-  并等待五个应用健康。Docker 模式只向宿主机暴露 Gateway 8080；其余服务只在容器网络中可达。
+  并等待五个应用健康。应用服务中只有 Gateway 8080 暴露到宿主机；MySQL、Redis 和 RocketMQ
+  端口仍为本地混合开发保留，其余业务服务只在容器网络中可达。
 #>
 param(
     [string]$DockerBaseRegistry = $(

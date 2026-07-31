@@ -186,7 +186,7 @@ public class ArticleServiceImpl implements ArticleService {
         if (a == null || a.getDeleted() != 0) return null;
         ArticleDetailVO vo = new ArticleDetailVO();
         BeanUtils.copyProperties(a, vo);
-        // authorName 实际应走 user 服务获取,这里 demo 简化
+        // 通过 UserClient 获取作者名；远端 user 服务不可用时由客户端返回兜底值。
         vo.setAuthorName(userClient.getUserName(a.getAuthorId()));
         return vo;
     }

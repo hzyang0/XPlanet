@@ -1,6 +1,6 @@
 # 架构与关键设计
 
-> 本文描述当前可运行的后端，以及秋招版 Phase 1～4 的 Research Workspace、动态工具循环、Claim–Evidence–Critic 和站内知识回流。后续目标、取舍和实施顺序只以 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 为准。
+> 本文描述当前可运行的后端，以及 Research Workspace、动态工具循环、Claim–Evidence–Critic 和站内知识回流。系统范围、取舍和后续变更原则以 [`CURRENT-SCOPE.md`](CURRENT-SCOPE.md) 为准。
 
 浏览器端现已从社区单页升级为三栏研究工作台：任务和预算位于左侧，LangGraph/SSE 节点时间线位于中间，来源、Evidence、Citation、模型用量和可编辑报告位于右侧；社区退为审核报告的发布与反馈入口。所有 API 和 SSE 仍只经过 Gateway。
 
@@ -37,8 +37,9 @@
 ### 2.1 命中路径
 ```
 请求 → L1(Caffeine) → L2(Redis) → DB
-       ~1μs            ~1ms        ~30ms
 ```
+
+三层依次是进程内缓存、网络缓存和持久化存储，通常访问成本递增；具体延迟以目标环境的实际测量为准。
 
 ### 2.2 击穿保护(L1+L2 都 miss)
 
@@ -92,7 +93,7 @@ T1(继续): 把 V0 写入 cache  ← 脏数据
 延迟 1s 再删一次,把 T1 写入的 V0 杀掉。延迟不再依赖 JVM 中 `sleep` 的临时任务，
 而是由 `next_retry_time` 持久化调度；MQ 暂停或实例崩溃后，relay 可以继续发送。
 
-延迟时长 = max(回源耗时 + 写缓存耗时) × 安全系数。本项目设 1s 是经验值。
+延迟时长应覆盖一次最慢读请求从数据库回源到缓存回填的时间，并留出安全余量。当前配置为 1 秒，仅用于本地验证；实际部署应按回源与回填链路的 P99 校准。
 
 ### 3.2 MQ 广播保证多实例 L1 一致
 
@@ -198,12 +199,12 @@ POST /api/ai/tasks
 
 ### 5.3 评测与可观测性
 
-- `xplanet-agent/eval/golden_dataset.jsonl` 固定 10 个离线案例，CI 评测成功率、引用索引有效率、来源绑定、预算边界和确定性词面 Claim Support；该指标用于回归绑定错误，不等同于语义或事实正确率；
+- `xplanet-agent/eval/golden_dataset.jsonl` 固定 30 个离线案例，CI 评测成功率、引用索引有效率、来源绑定、预算边界和确定性词面 Claim Support；该指标用于回归绑定错误，不等同于语义或事实正确率；
 - `xplanet-ai` 通过 Actuator/Prometheus 暴露 Agent 执行结果与耗时、节点 checkpoint 次数与耗时；
 - `scripts/test-agent-recovery.ps1` 在首个 `EXECUTE_TOOL` checkpoint 成功后一次性强制退出 Agent，再关闭故障开关，验证容器重启、RocketMQ 重投、attempt 增长及工具结果不重复执行；
 - 本阶段指标是本地功能验收证据，不是生产容量或线上质量结论。
 
-## 6. 已知取舍(面试可主动说出来加分)
+## 6. 已知取舍与边界
 
 - 点赞事实与计数投影当前共享一个 MySQL 实例，但已按表明确 interaction/article 所有权；后续拆库时协议保持不变
 - Outbox/投影目前只有日志和表状态，尚未接入积压量、失败率和最老事件时长监控
@@ -219,7 +220,7 @@ POST /api/ai/tasks
 ## 7. 部署与迁移
 
 - 本地混合模式通过 `scripts/setup-infra.ps1` 启动中间件，RocketMQ broker 广播宿主机地址，Java 服务在 IDE 或本机 JVM 中运行；
-- 全 Docker 模式通过 `scripts/start-docker.ps1` 切换 broker 容器地址、执行 Flyway、构建五个 Java 应用和一个 Python Agent 镜像并等待健康；宿主机只暴露 Gateway 8080；
+- 全 Docker 模式通过 `scripts/start-docker.ps1` 切换 broker 容器地址、执行 Flyway、构建五个 Java 应用和一个 Python Agent 镜像并等待健康；应用服务中只有 Gateway 8080 暴露到宿主机，中间件端口仍为本地混合开发保留；
 - 数据库只有 Flyway 一条结构来源：空库执行 V004 完整 baseline，已有 V4 结构但没有迁移历史的数据库会自动记为 baseline；两者随后统一执行 V005～V009。以后只追加版本脚本，不回写旧迁移；
 - 两种模式共用固定 `xplanet-net` 网络，但分别使用 `broker-host.conf` 和 `broker-docker.conf`，避免 broker 把客户端无法访问的地址注册到 NameServer；
 - 当前执行 Java/Python 单元测试、固定离线评测和 5 条站内召回评测；真实 MySQL/Redis/RocketMQ/Gateway/Agent 行为由 `scripts/smoke-test.ps1`、`scripts/test-agent-recovery.ps1` 与 `scripts/test-internal-recall.ps1` 验证。

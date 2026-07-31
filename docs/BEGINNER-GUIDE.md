@@ -1,6 +1,6 @@
 # XPlanet 零基础入门与项目导读
 
-> 本文用于理解当前可运行的后端，以及 Phase 1～4 的 Research Workspace、动态工具循环、Claim–Evidence–Critic 和站内知识回流。掌握当前链路后，再阅读 [`XPlanet-秋招版最终方案.md`](XPlanet-秋招版最终方案.md) 了解评测与发布收口。
+> 本文用于理解当前可运行的后端，以及 Research Workspace、动态工具循环、Claim–Evidence–Critic 和站内知识回流。掌握当前链路后，再阅读 [`CURRENT-SCOPE.md`](CURRENT-SCOPE.md) 了解完整范围、取舍与完成标准。
 
 > 适合第一次接触 Java 微服务、Redis、RocketMQ 和 Agent 的同学。建议不要一上来逐行读代码，先按本文把系统跑起来，再沿着一条请求追代码。
 
@@ -106,7 +106,8 @@ Controller → Service → Mapper → MySQL/Redis
 - JDK 17；
 - Maven；
 - Docker Desktop；
-- PowerShell 5.1 或更高版本。
+- PowerShell 5.1 或更高版本；
+- Python 3.11 或更高版本（本地运行 Agent 或静态页面服务器时需要；全 Docker 启动不要求宿主机安装 Python）。
 
 检查：
 
@@ -115,6 +116,7 @@ java -version
 mvn -version
 docker version
 docker compose version
+python --version
 ```
 
 ### 5.2 设置本地密钥
@@ -578,11 +580,11 @@ mvn -B -ntp clean test
 
 “能编译”不等于“整个系统可用”，所以必须有后两类测试。
 
-## 17. 面试时如何介绍
+## 17. 如何分层讲解项目
 
 可以用三层表达：
 
-### 30 秒
+### 一句话定位
 
 > XPlanet 是开发者社区与可追溯研究 Agent 的结合。外部通过 Gateway 统一访问，Java 负责社区业务和 AI 任务控制，Python LangGraph 在预算内动态选择搜索、抓取或结束。工具结果先 checkpoint 再推进，报告经过证据绑定和人工审核后幂等发布成文章。
 

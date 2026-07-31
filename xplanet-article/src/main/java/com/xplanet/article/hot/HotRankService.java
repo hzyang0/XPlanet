@@ -37,7 +37,7 @@ import java.util.stream.Collectors;
  *   <li><b>降级</b>:Redis ZSet 为空(冷启动还没刷过)时,直接查 DB 兜底。</li>
  * </ul>
  *
- * <h3>面试讲点</h3>
+ * <h3>设计说明</h3>
  * <p>1. Redis ZSet 实现排行榜是经典用法,会被问"为什么不用 List/Set":
  *      List 不能按分值排序,Set 没有分值。ZSet = Set + score,完美契合。<br>
  *    2. 排行榜的实时性 vs 性能权衡——一定要能说出"为什么不实时更新"。<br>
@@ -94,7 +94,7 @@ public class HotRankService {
     @Scheduled(fixedDelay = 60_000, initialDelay = 5_000)
     public void refresh() {
         try {
-            // 取所有未删除文章(实际场景应分页,这里 demo 简化)
+            // 当前直接读取所有未删除文章；数据量增长后应改为分页或增量计算。
             List<Article> all = articleMapper.selectList(
                     new LambdaQueryWrapper<Article>().eq(Article::getDeleted, 0));
             if (all.isEmpty()) return;

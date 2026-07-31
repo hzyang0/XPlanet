@@ -84,5 +84,5 @@ Broker 停止时，AI Outbox 保持待发送并记录失败次数；Broker 恢�
 
 - 没有真实 OpenAI API Key 和成本授权，因此 `openai-tools` 只完成 MockTransport 契约测试；
 - 没有当前 Outbox/MQ/投影全链路的多用户容量压测，因此不宣称 QPS、削峰倍数或生产 SLA；
-- MySQL、Redis、RocketMQ 为单机演示环境，不代表中间件高可用；
+- MySQL、Redis、RocketMQ 为本地单节点环境，不代表中间件高可用；
 - Claim Support 是确定性词面门禁，不替代人工或模型语义 Judge。

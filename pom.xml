@@ -10,7 +10,7 @@
     <packaging>pom</packaging>
 
     <name>xplanet</name>
-    <description>High-concurrency developer community platform</description>
+    <description>Traceable research agent and developer knowledge platform</description>
 
     <modules>
         <module>xplanet-common</module>

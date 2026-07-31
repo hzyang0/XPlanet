@@ -104,7 +104,7 @@ Protected write flows require a token from `POST /api/user/login`. Verify the co
 
 ## Reading order by task
 
-- Autumn recruiting implementation target: `docs/XPlanet-秋招版最终方案.md` is the sole authoritative roadmap; `docs/ARCHITECTURE.md` remains the current runnable v2 description.
+- Current system scope: `docs/CURRENT-SCOPE.md` is the authoritative baseline; `docs/ARCHITECTURE.md` describes the current runnable architecture.
 - Beginner onboarding: `docs/BEGINNER-GUIDE.md` -> Gateway config/filters -> one controller-to-database request flow.
 - Architecture: root `pom.xml` -> module POMs -> `docs/ARCHITECTURE.md` -> application entrypoints and configs.
 - Persistence: `sql/migrations/V004__baseline_schema.sql` plus later Flyway migrations -> entity -> mapper/XML -> service transaction boundary.
