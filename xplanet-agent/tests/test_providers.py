@@ -62,7 +62,7 @@ def test_deepseek_model_provider_uses_chat_json_mode_and_preserves_usage() -> No
     assert captured[0][1]["response_format"] == {"type": "json_object"}
     assert captured[0][1]["max_tokens"] == 4000
     assert captured[0][1]["thinking"] == {"type": "disabled"}
-    assert "same natural language" in captured[0][1]["messages"][1]["content"]
+    assert "every heading, sentence, claim" in captured[0][1]["messages"][1]["content"]
     assert "Required JSON Schema" in captured[0][1]["messages"][1]["content"]
 
 
@@ -97,7 +97,7 @@ def test_deepseek_writer_requires_question_language() -> None:
     draft, _ = provider.write(command(), command().question, plan, [source], [evidence], None)
 
     assert draft.title.startswith("研究报告")
-    assert "same language as the question" in captured[0]["messages"][1]["content"]
+    assert "Use Simplified Chinese for every heading" in captured[0]["messages"][1]["content"]
 
 
 def test_deepseek_writer_appends_missing_claim_evidence_map() -> None:
