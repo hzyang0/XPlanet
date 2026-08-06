@@ -90,13 +90,13 @@ def test_workflow_produces_traceable_report_with_bounded_sources() -> None:
     assert sum(1 for node, _, _ in sink.events if node == "TOOL_COMPLETED") == 2
 
 
-def test_workflow_reuses_internal_knowledge_within_the_shared_tool_budget() -> None:
+def test_workflow_uses_bounded_offline_corpus_within_the_shared_tool_budget() -> None:
     sink = RecordingSink()
 
     result = ResearchWorkflow().run(command(maxSources=2, maxToolCalls=1), sink)
 
-    assert all(source.url.startswith("http://localhost:8080/api/article/") for source in result.sources)
-    assert all(item.locator == "published internal article" for item in result.evidence)
+    assert all(source.url.startswith("https://") for source in result.sources)
+    assert all(item.locator == "offline corpus" for item in result.evidence)
     assert sink.saved_nodes.count("EXECUTE_TOOL") == 1
 
 

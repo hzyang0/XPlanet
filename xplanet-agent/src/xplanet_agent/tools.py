@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
 from html.parser import HTMLParser
 from typing import Any, Callable, Protocol
@@ -36,14 +37,32 @@ class OfflineInternalSearchProvider:
 
         hits = [
             SearchHit(
-                url=f"http://localhost:8080/api/article/offline-{index}",
-                title=f"站内知识：{document.title}",
+                url=document.url,
+                title=f"离线语料：{document.title}",
                 snippet=document.content,
-                sourceType="internal",
+                sourceType="offline",
             )
-            for index, document in enumerate(sorted(OFFLINE_CORPUS, key=rank)[:limit], start=1)
+            for document in sorted(OFFLINE_CORPUS, key=rank)[:limit]
         ]
         return ToolExecutionResult(action=action, searchHits=hits)
+
+
+def _concise_internal_content(content: str, max_chars: int = 1600) -> str:
+    """Bound and de-duplicate generated-looking Markdown before using it as evidence."""
+    unique_lines: list[str] = []
+    seen: set[str] = set()
+    for raw_line in content.splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line:
+            continue
+        identity = line.casefold()
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique_lines.append(line)
+        if sum(len(item) + 1 for item in unique_lines) >= max_chars:
+            break
+    return "\n".join(unique_lines)[:max_chars].rstrip()
 
 
 class HttpInternalSearchProvider:
@@ -82,11 +101,14 @@ class HttpInternalSearchProvider:
             content = raw.get("content")
             if not isinstance(article_id, int) or not isinstance(title, str) or not isinstance(content, str):
                 raise ValueError("internal_search returned an invalid article item")
+            concise_content = _concise_internal_content(content)
+            if not concise_content:
+                continue
             hits.append(
                 SearchHit(
                     url=f"{self._public_base_url}/api/article/{article_id}",
                     title=title,
-                    snippet=content[:4000],
+                    snippet=concise_content,
                     sourceType="internal",
                 )
             )

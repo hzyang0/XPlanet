@@ -18,7 +18,9 @@ public interface ArticleMapper extends BaseMapper<Article> {
     @Select("SELECT id AS article_id, title, LEFT(content, 4000) AS content, " +
             "MATCH(title, content) AGAINST (#{query} IN NATURAL LANGUAGE MODE) AS score, " +
             "like_count, update_time FROM article " +
-            "WHERE deleted=0 AND MATCH(title, content) AGAINST (#{query} IN NATURAL LANGUAGE MODE) > 0 " +
+            "WHERE deleted=0 " +
+            "AND FIND_IN_SET('ai', REPLACE(COALESCE(tags, ''), ' ', '')) = 0 " +
+            "AND MATCH(title, content) AGAINST (#{query} IN NATURAL LANGUAGE MODE) > 0 " +
             "ORDER BY score DESC, like_count DESC, id DESC LIMIT #{topK}")
     List<InternalArticleSearchVO> searchKnowledge(@Param("query") String query,
                                                    @Param("topK") int topK);

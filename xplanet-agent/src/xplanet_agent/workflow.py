@@ -478,6 +478,8 @@ class ResearchWorkflow:
                         if document
                         else "internal-article"
                         if candidate.sourceType == "internal"
+                        else "offline-corpus"
+                        if candidate.sourceType == "offline"
                         else "search-snippet"
                     ),
                     "semanticSupportVerified": bool(document),
@@ -504,11 +506,19 @@ class ResearchWorkflow:
                         if document
                         else "published internal article"
                         if candidate.sourceType == "internal"
+                        else "offline corpus"
+                        if candidate.sourceType == "offline"
                         else "web search snippet"
                     ),
                     content=content[:4000],
                     contentHash=hashlib.sha256(content[:4000].encode("utf-8")).hexdigest(),
-                    score=0.88 if document else 0.8 if candidate.sourceType == "internal" else 0.55,
+                    score=(
+                        0.88
+                        if document
+                        else 0.8
+                        if candidate.sourceType in {"internal", "offline"}
+                        else 0.55
+                    ),
                 )
             )
             if len(sources) >= command.maxSources:

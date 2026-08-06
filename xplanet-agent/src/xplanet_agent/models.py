@@ -56,7 +56,7 @@ class SearchHit(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
     title: str = Field(min_length=1, max_length=500)
     snippet: str = Field(min_length=1, max_length=4000)
-    sourceType: Literal["web", "internal"] = "web"
+    sourceType: Literal["web", "internal", "offline"] = "web"
 
 
 class FetchedDocument(BaseModel):

@@ -42,6 +42,8 @@ class ArticleKnowledgeSearchServiceTest {
         String sql = String.join(" ", method.getAnnotation(Select.class).value());
 
         assertThat(sql).contains("deleted=0");
+        assertThat(sql).contains("FIND_IN_SET('ai'");
+        assertThat(sql).contains("COALESCE(tags, '')");
         assertThat(sql).contains("LIMIT #{topK}");
         assertThat(sql).contains("MATCH(title, content)");
     }

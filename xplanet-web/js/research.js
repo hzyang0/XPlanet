@@ -3,6 +3,14 @@
 
   const root = global.XP = global.XP || {};
   const activeStatuses = new Set(["QUEUED", "RUNNING", "RETRYING"]);
+  const workflowPhases = [
+    { label: "输入与规划", nodes: ["VALIDATE_INPUT", "PLAN_CREATED"] },
+    { label: "检索与工具", nodes: ["DECIDE_ACTION", "TOOL_STARTED", "TOOL_COMPLETED"] },
+    { label: "证据整理", nodes: ["EVIDENCE_ADDED"] },
+    { label: "报告写作", nodes: ["WRITER"] },
+    { label: "质量审计", nodes: ["CRITIC"] },
+    { label: "生成完成", nodes: ["FINALIZE"] }
+  ];
   const state = {
     tasks: [],
     selectedTask: null,
@@ -224,7 +232,23 @@
 
   function renderTimeline() {
     const box = document.getElementById("eventTimeline");
+    const flow = document.getElementById("phaseFlow");
+    const summary = document.getElementById("traceSummary");
     const events = Array.from(state.events.values());
+    flow.innerHTML = workflowPhases.map(function (phase, index) {
+      const phaseEvents = events.filter(function (event) { return phase.nodes.includes(event.node); });
+      const latest = phaseEvents[phaseEvents.length - 1];
+      const failed = phaseEvents.some(function (event) { return event.status === "FAILED"; });
+      const running = latest && ["RUNNING", "QUEUED", "RETRYING"].includes(latest.status);
+      const tone = failed ? "failed" : running ? "running" : phaseEvents.length ? "completed" : "pending";
+      const marker = failed ? "!" : running ? "…" : phaseEvents.length ? "✓" : String(index + 1);
+      const detail = latest ? latest.message : "等待前序阶段";
+      return '<div class="phase-card is-' + tone + '"><span class="phase-marker">' + marker + '</span>' +
+        '<div><b>' + root.util.escapeHtml(phase.label) + '</b><small>' +
+        root.util.escapeHtml(detail) + (phaseEvents.length > 1 ? " · " + phaseEvents.length + " 个事件" : "") +
+        '</small></div></div>';
+    }).join("");
+    summary.textContent = "查看 " + events.length + " 条原始节点事件";
     if (!events.length) {
       box.innerHTML = '<li class="empty-copy">任务入队后，节点事件会在这里实时出现。</li>';
       return;
@@ -237,7 +261,6 @@
         root.util.escapeHtml(root.util.formatTime(event.timestamp)) + '</time></div><p>' +
         root.util.escapeHtml(event.message) + '</p></div></li>';
     }).join("");
-    box.lastElementChild && box.lastElementChild.scrollIntoView({ block: "nearest" });
   }
 
   function connectStream() {
@@ -325,10 +348,10 @@
     document.getElementById("reportTitle").value = report.title || "";
     document.getElementById("reportContent").value = report.content || "";
     document.getElementById("reportPreview").innerHTML = root.util.renderMarkdown(report.content || "");
-    document.getElementById("qualityScore").textContent = "质量分 " + (report.qualityScore == null ? "-" : Number(report.qualityScore).toFixed(2));
-    document.getElementById("sourceCount").textContent = "来源 " + (report.sources || []).length;
-    document.getElementById("evidenceCount").textContent = "证据 " + (report.evidence || []).length;
-    document.getElementById("citationCount").textContent = "引用 " + (report.citations || []).length;
+    document.getElementById("qualityScore").textContent = report.qualityScore == null ? "-" : Number(report.qualityScore).toFixed(2);
+    document.getElementById("sourceCount").textContent = (report.sources || []).length;
+    document.getElementById("evidenceCount").textContent = (report.evidence || []).length;
+    document.getElementById("citationCount").textContent = (report.citations || []).length;
     renderSources(report.sources || []);
     renderEvidence(report.evidence || [], report.citations || []);
     renderUsage(report.usage || []);
@@ -343,9 +366,15 @@
     const box = document.getElementById("sourceList");
     box.innerHTML = sources.length ? sources.map(function (source, index) {
       const url = root.util.safeHttpUrl(source.url);
+      const internalArticle = url && url.match(/\/api\/article\/(\d+)(?:[?#].*)?$/);
+      const link = internalArticle
+        ? '<button class="source-link" data-source-article-id="' + internalArticle[1] + '" type="button">' +
+          root.util.escapeHtml(source.title || "站内文章") + '</button>'
+        : url
+          ? '<a href="' + root.util.escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + root.util.escapeHtml(source.title || url) + '</a>'
+          : '<b>' + root.util.escapeHtml(source.title || "未知来源") + '</b>';
       return '<div class="source-card"><small>SOURCE ' + (index + 1) + ' · #' + source.id + '</small>' +
-        (url ? '<a href="' + root.util.escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + root.util.escapeHtml(source.title || url) + '</a>' :
-          '<b>' + root.util.escapeHtml(source.title || "未知来源") + '</b>') +
+        link +
         '<small title="' + root.util.escapeHtml(source.contentHash || "") + '">' + root.util.escapeHtml(shortHash(source.contentHash)) + '</small></div>';
     }).join("") : '<div class="empty-copy">没有来源</div>';
   }
@@ -439,6 +468,10 @@
     document.getElementById("approveReportButton").addEventListener("click", approveReport);
     document.getElementById("openArticleButton").addEventListener("click", function (event) {
       root.community.openArticle(event.currentTarget.dataset.articleId);
+    });
+    document.getElementById("sourceList").addEventListener("click", function (event) {
+      const link = event.target.closest("[data-source-article-id]");
+      if (link) root.community.openArticle(link.dataset.sourceArticleId);
     });
     document.getElementById("reportContent").addEventListener("input", function (event) {
       document.getElementById("reportPreview").innerHTML = root.util.renderMarkdown(event.target.value);

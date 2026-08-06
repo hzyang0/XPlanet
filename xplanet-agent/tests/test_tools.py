@@ -2,7 +2,12 @@ import httpx
 import pytest
 
 from xplanet_agent.models import TaskCommand, ToolAction
-from xplanet_agent.tools import HttpDocumentFetcher, HttpInternalSearchProvider
+from xplanet_agent.tools import (
+    HttpDocumentFetcher,
+    HttpInternalSearchProvider,
+    OfflineInternalSearchProvider,
+    _concise_internal_content,
+)
 
 
 def command() -> TaskCommand:
@@ -154,3 +159,28 @@ def test_internal_search_rejects_invalid_business_payload() -> None:
             ToolAction(name="internal_search", query="checkpoint", reason="reuse knowledge"),
             5,
         )
+
+
+def test_offline_internal_sources_use_real_corpus_urls() -> None:
+    result = OfflineInternalSearchProvider().search(
+        command(),
+        ToolAction(name="internal_search", query="checkpoint", reason="offline knowledge"),
+        2,
+    )
+
+    assert len(result.searchHits) == 2
+    assert all(hit.url.startswith("https://") for hit in result.searchHits)
+    assert all(hit.sourceType == "offline" for hit in result.searchHits)
+    assert all(hit.title.startswith("离线语料：") for hit in result.searchHits)
+    assert all("/api/article/offline-" not in hit.url for hit in result.searchHits)
+
+
+def test_internal_article_content_is_bounded_and_deduplicated() -> None:
+    repeated = "# Report\n\nA useful claim.\n\n# Report\n\nA useful claim.\n\nAnother fact."
+
+    concise = _concise_internal_content(repeated, max_chars=100)
+
+    assert concise.count("# Report") == 1
+    assert concise.count("A useful claim.") == 1
+    assert "Another fact." in concise
+    assert len(concise) <= 100

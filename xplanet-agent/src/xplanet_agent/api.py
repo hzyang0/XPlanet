@@ -36,7 +36,10 @@ def _internal_search_provider() -> HttpInternalSearchProvider | OfflineInternalS
 
 def _build_offline_workflow() -> ResearchWorkflow:
     return ResearchWorkflow(
-        internal_search_provider=_internal_search_provider(),
+        # Offline runs must be reproducible and must never feed previously generated
+        # community reports back into the next report. That feedback loop caused each
+        # run to copy the preceding report and grow recursively.
+        internal_search_provider=OfflineInternalSearchProvider(),
         after_checkpoint=_optional_crash_after_checkpoint,
     )
 

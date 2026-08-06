@@ -6,7 +6,7 @@
   <meta name="description" content="XPlanet 可追溯技术研究 Agent 与知识社区">
   <title>XPlanet Research · 可追溯技术研究 Agent</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2317594a'/%3E%3Ctext x='32' y='41' text-anchor='middle' font-family='monospace' font-size='25' font-weight='700' fill='white'%3EXP%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="assets/app.css?v=20260806-3">
+  <link rel="stylesheet" href="assets/app.css?v=20260806-4">
 </head>
 <body>
   <header class="site-header">
@@ -69,23 +69,27 @@
           </div>
 
           <form id="researchForm" class="research-form">
-            <label for="researchQuestion">研究问题</label>
-            <textarea id="researchQuestion" maxlength="2000" required placeholder="例如：Transactional Outbox 如何解决数据库与消息队列的一致性问题？"></textarea>
-            <label for="researchProvider">执行模式</label>
-            <select id="researchProvider">
-              <option value="offline-demo">离线模式 · 确定性演示</option>
-              <option value="openai-tools">在线模式 · OpenAI + 工具</option>
-            </select>
-            <p id="providerHint" class="provider-hint">离线模式不消耗模型额度，适合完整流程演示。</p>
-            <details>
-              <summary>预算设置</summary>
-              <div class="budget-grid">
-                <label>来源上限<input id="maxSources" type="number" min="1" max="20" value="5"></label>
-                <label>工具上限<input id="maxToolCalls" type="number" min="1" max="50" value="10"></label>
-                <label>Token 上限<input id="maxTokens" type="number" min="1000" max="100000" value="8000"></label>
-                <label>超时（秒）<input id="deadlineSeconds" type="number" min="30" max="3600" value="300"></label>
-              </div>
-            </details>
+            <div class="research-question-field">
+              <label for="researchQuestion">研究问题</label>
+              <textarea id="researchQuestion" maxlength="2000" required placeholder="例如：Transactional Outbox 如何解决数据库与消息队列的一致性问题？"></textarea>
+            </div>
+            <div class="research-mode-field">
+              <label for="researchProvider">执行模式</label>
+              <select id="researchProvider">
+                <option value="offline-demo">离线模式 · 确定性演示</option>
+                <option value="openai-tools">在线模式 · OpenAI + 工具</option>
+              </select>
+              <p id="providerHint" class="provider-hint">离线模式不消耗模型额度，适合完整流程演示。</p>
+              <details>
+                <summary>预算设置</summary>
+                <div class="budget-grid">
+                  <label>来源上限<input id="maxSources" type="number" min="1" max="20" value="5"></label>
+                  <label>工具上限<input id="maxToolCalls" type="number" min="1" max="50" value="10"></label>
+                  <label>Token 上限<input id="maxTokens" type="number" min="1000" max="100000" value="8000"></label>
+                  <label>超时（秒）<input id="deadlineSeconds" type="number" min="30" max="3600" value="300"></label>
+                </div>
+              </details>
+            </div>
             <button id="createTaskButton" class="button button-primary" type="submit">开始研究</button>
           </form>
 
@@ -125,10 +129,14 @@
               <div class="progress-track"><div id="taskProgressBar" class="progress-bar"></div></div>
             </div>
             <div class="section-heading">
-              <div><p class="eyebrow">LIVE TRACE</p><h3>执行计划与节点时间线</h3></div>
+              <div><p class="eyebrow">LIVE TRACE</p><h3>Agent 执行流程</h3></div>
               <span id="streamState" class="stream-state">等待连接</span>
             </div>
-            <ol id="eventTimeline" class="timeline" aria-live="polite"></ol>
+            <div id="phaseFlow" class="phase-flow" aria-live="polite"></div>
+            <details class="trace-details">
+              <summary id="traceSummary">查看原始节点事件</summary>
+              <ol id="eventTimeline" class="timeline"></ol>
+            </details>
           </div>
         </section>
 
@@ -156,15 +164,15 @@
                 <div id="reportPreview" class="markdown-preview markdown-body"></div>
               </div>
             </div>
-            <div class="report-stats">
-              <span id="qualityScore" title="Critic 对论点—证据绑定、覆盖度与引用完整性的综合评分">质量分 -</span>
-              <span id="sourceCount">来源 0</span>
-              <span id="evidenceCount">证据 0</span>
-              <span id="citationCount">引用 0</span>
+            <div class="report-stats" aria-label="报告质量指标">
+              <div class="metric-card"><b>质量分</b><span id="qualityScore">-</span><small>Critic 对论点支持度和证据质量的综合评分，不等于事实正确率</small></div>
+              <div class="metric-card"><b>来源</b><span id="sourceCount">0</span><small>保存并去重后的网页、文档或站内知识条目</small></div>
+              <div class="metric-card"><b>证据</b><span id="evidenceCount">0</span><small>从来源中提取、带哈希和定位信息的可核验片段</small></div>
+              <div class="metric-card"><b>引用</b><span id="citationCount">0</span><small>报告论点 Claim 与证据 Evidence 之间的绑定关系</small></div>
             </div>
 
             <details class="evidence-section" open>
-              <summary>来源与 Evidence</summary>
+              <summary>来源与证据详情</summary>
               <div id="sourceList" class="source-list"></div>
               <div id="evidenceList" class="evidence-list"></div>
             </details>
@@ -221,10 +229,10 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script src="js/api.js?v=20260806-3"></script>
-  <script src="js/auth.js?v=20260806-3"></script>
-  <script src="js/community.js?v=20260806-3"></script>
-  <script src="js/research.js?v=20260806-3"></script>
-  <script src="js/app.js?v=20260806-3"></script>
+  <script src="js/api.js?v=20260806-4"></script>
+  <script src="js/auth.js?v=20260806-4"></script>
+  <script src="js/community.js?v=20260806-4"></script>
+  <script src="js/research.js?v=20260806-4"></script>
+  <script src="js/app.js?v=20260806-4"></script>
 </body>
 </html>
