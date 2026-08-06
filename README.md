@@ -130,7 +130,7 @@ $env:OPENAI_API_KEY="replace-with-your-key"
 $env:OPENAI_MODEL="gpt-5.6-terra"
 ```
 
-全 Docker 模式可直接编辑被 Git 忽略的 `.env`，填写 `OPENAI_API_KEY` 后重新运行 `scripts/start-docker.ps1`。工作台会自动刷新 Agent 能力：Key 未配置时在线选项禁用，配置后在线选项启用。不要把 `.env` 提交到仓库。
+全 Docker 模式可直接编辑被 Git 忽略的 `.env`，填写 `OPENAI_API_KEY` 后执行 `docker compose -f docker/docker-compose-app.yml up -d --force-recreate agent`。工作台刷新任务列表时会重新读取 Agent 能力：Key 未配置时在线选项禁用，配置后在线选项启用。不要把 `.env` 提交到仓库。
 
 Gateway 容器默认暴露宿主机 8080；若 8080 已占用，启动脚本自动尝试 18080。浏览器工作台会探测两个端口并保存实际可用地址，因此不同浏览器不再依赖各自旧的 localStorage 配置。
 
