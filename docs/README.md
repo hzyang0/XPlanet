@@ -5,7 +5,7 @@
 ## 推荐阅读顺序
 
 1. [`../README.md`](../README.md)：项目定位、模块、启动方式和主要能力；
-2. [`BEGINNER-GUIDE.md`](BEGINNER-GUIDE.md)：从零启动项目，并沿文章、点赞和研究任务三条主链路阅读代码；
+2. [`BEGINNER-GUIDE.md`](BEGINNER-GUIDE.md)：从零启动项目，沿文章、点赞和研究任务三条主链路阅读重点代码，并通过分时学习路线与高频问答完成自测；
 3. [`ARCHITECTURE.md`](ARCHITECTURE.md)：模块边界、数据流、缓存、可靠消息、Agent 和发布闭环；
 4. [`CURRENT-SCOPE.md`](CURRENT-SCOPE.md)：当前系统范围、保留组件、明确不引入的组件和变更原则；
 5. [`TECHNICAL-GUIDE.md`](TECHNICAL-GUIDE.md)：核心技术原理、设计取舍、故障场景和连续设计问题；
