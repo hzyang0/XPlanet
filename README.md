@@ -2,7 +2,7 @@
 
 > 面向开发者的可追溯研究与社区平台：高并发社区底座、Agent 工作流、人工审核和幂等发布已形成首个可运行闭环。
 
-> **当前基线（2026-07-21）**：Research Workspace、有界动态工具循环、Claim–Evidence–Critic、站内知识回流、30 题评测和故障恢复均有可复现证据。真实 OpenAI/Web Search 质量仍需在明确提供密钥和成本授权后单独验收。
+> **当前基线（2026-08-06）**：Research Workspace、有界动态工具循环、Claim–Evidence–Critic、站内知识回流、30 题评测和故障恢复均有可复现证据。`deepseek-tools` 已在受限预算下完成真实在线闭环验收；联网结果仍须由人工审核，不以一次演示替代事实正确率或容量指标。
 
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.18-brightgreen.svg)](https://spring.io/projects/spring-boot)
@@ -248,7 +248,7 @@ xplanet/
 - Token 使用标准 JWT/JWS 库签发和校验，签名密钥通过 `TOKEN_SECRET` 外部注入
 - 登录使用 Spring PasswordEncoder 校验 bcrypt 哈希；本地初始化账号共用初始密码，仅用于本地数据
 - 点赞以 `like_relation` 为事实源,通过 Outbox 至少一次投递；消费端唯一事件表和事务批量投影吸收重复并支持崩溃恢复
-- AI 已完成离线确定性闭环、持久化 checkpoint、崩溃恢复、有限重试、Claim–Evidence–Critic 和 MySQL 站内检索；联网 Provider 尚未用真实密钥验收，离线词面支持率和站内召回率不能替代联网事实核验，完整可观测平台仍是后续项
+- AI 已完成离线确定性闭环、持久化 checkpoint、崩溃恢复、有限重试、Claim–Evidence–Critic、MySQL 站内检索和 DeepSeek 小预算在线验收；在线 JSON 格式异常只会进行一次受限修复重试，外部网页 403/超时会降级跳过。离线词面支持率和站内召回率不能替代联网事实核验，完整可观测平台仍是后续项。学习与试用步骤见 [`docs/ONLINE-MODE-GUIDE.md`](docs/ONLINE-MODE-GUIDE.md)。
 - 当前没有针对 Outbox + MQ + 持久化投影完整链路的有效容量压测，因此不宣称 QPS、削峰倍数或生产 SLA
 
 这些取舍均对应当前规模和已经验证的需求；演进路径见相关设计文档。

@@ -572,7 +572,7 @@ Gateway 拒绝时返回 HTTP 401，同时保留项目业务码：
 | `xplanet-ai/src/main/java/com/xplanet/ai/mq/AgentTaskConsumer.java` | 接收命令并进入执行服务 |
 | `xplanet-ai/src/main/java/com/xplanet/ai/service/AgentTaskExecutionService.java` | Java 调 Python、状态迁移、结果/异常处理和指标 |
 | `xplanet-agent/src/xplanet_agent/workflow.py` | LangGraph 节点、条件边和恢复路由，整个 Agent 的核心 |
-| `xplanet-agent/src/xplanet_agent/providers.py` | 离线与 OpenAI Provider 契约，Planner/Decision/Writer/Critic 的模型边界 |
+| `xplanet-agent/src/xplanet_agent/providers.py` | 离线与 DeepSeek Provider 契约，Planner/Decision/Writer/Critic 的模型边界、单语输出约束与一次 JSON 格式修复重试 |
 | `xplanet-agent/src/xplanet_agent/tools.py` | 站内检索、Web 搜索、网页抓取与 SSRF 防护 |
 | `xplanet-ai/src/main/java/com/xplanet/ai/service/AiCheckpointService.java` | checkpoint 的 run 校验与落库 |
 | `xplanet-ai/src/main/java/com/xplanet/ai/service/AiResultPersistenceService.java` | Source、Evidence、Citation、报告如何校验后事务落库 |
@@ -681,7 +681,7 @@ mvn -B -ntp clean test
 
 ### 主动说明边界
 
-- 默认 Agent 是离线可复现 Provider；真实 OpenAI 路径只做了模拟契约测试；
+- 默认 Agent 是离线可复现 Provider；`deepseek-tools` 已完成一次受限预算的真实在线闭环验收，但一次验收不等同于事实正确率、容量或 SLA；
 - 引用 ID 有效不代表证据一定在事实层面支持结论；
 - MySQL、Redis、RocketMQ 目前是本地单机；
 - 没有 Nacos、Seata、Dubbo 和 Kubernetes，因为当前规模没有对应需求；
