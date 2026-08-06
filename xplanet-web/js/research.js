@@ -78,18 +78,18 @@
     try {
       state.providerCapabilities = await root.api.request("/api/ai/providers");
       const providers = state.providerCapabilities.providers || {};
-      const online = Boolean(providers["openai-tools"]);
-      const onlineOption = select.querySelector('option[value="openai-tools"]');
+      const online = Boolean(providers["deepseek-tools"]);
+      const onlineOption = select.querySelector('option[value="deepseek-tools"]');
       onlineOption.disabled = !online;
-      if (!online && select.value === "openai-tools") select.value = "offline-demo";
+      if (!online && select.value === "deepseek-tools") select.value = "offline-demo";
       hint.textContent = online
         ? "在线模式已就绪：由 Agent 在服务端读取 API Key，浏览器不会接触密钥。"
-        : "离线模式可用；要启用在线模式，请配置 OPENAI_API_KEY 后重启 Agent。";
+        : "离线模式可用；要启用在线模式，请在本地 .env 配置 DEEPSEEK_API_KEY 后重启 Agent。";
       hint.classList.toggle("is-online", online);
     } catch (_) {
       state.providerCapabilities = null;
       select.value = "offline-demo";
-      select.querySelector('option[value="openai-tools"]').disabled = true;
+      select.querySelector('option[value="deepseek-tools"]').disabled = true;
       hint.textContent = "暂时无法读取 Agent 能力，已安全回退到离线模式。";
     }
   }
@@ -352,7 +352,7 @@
     document.getElementById("sourceCount").textContent = (report.sources || []).length;
     document.getElementById("evidenceCount").textContent = (report.evidence || []).length;
     document.getElementById("citationCount").textContent = (report.citations || []).length;
-    renderSources(report.sources || []);
+    renderSources(report.sources || [], report.evidence || []);
     renderEvidence(report.evidence || [], report.citations || [], report.sources || []);
     renderCitations(report.citations || [], report.evidence || [], report.sources || []);
     renderUsage(report.usage || []);
@@ -363,8 +363,11 @@
     openButton.dataset.articleId = published ? report.publishArticleId : "";
   }
 
-  function renderSources(sources) {
+  function renderSources(sources, evidence) {
     const box = document.getElementById("sourceList");
+    const summarySourceIds = new Set((evidence || []).filter(function (item) {
+      return ["外部来源摘要", "离线内置语料"].includes(item.locator);
+    }).map(function (item) { return item.sourceId; }));
     box.innerHTML = sources.length ? sources.map(function (source, index) {
       const url = root.util.safeHttpUrl(source.url);
       const internalArticle = url && url.match(/\/api\/article\/(\d+)(?:[?#].*)?$/);
@@ -372,7 +375,9 @@
       const legacyOffline = !internalArticle && rawTitle.startsWith("站内知识：");
       const offline = rawTitle.startsWith("离线语料：") || legacyOffline;
       const displayTitle = rawTitle.replace(/^(?:站内知识|离线语料)：\s*/, "");
-      const sourceKind = internalArticle ? "站内文章" : offline ? "离线语料 · 原始页" : "外部来源";
+      const sourceKind = internalArticle ? "站内文章"
+        : (summarySourceIds.has(source.id) || offline) ? "外部来源 · 摘要"
+        : "外部来源 · 已抓取原文";
       const link = internalArticle
         ? '<button class="source-link" data-source-article-id="' + internalArticle[1] + '" type="button">' +
           root.util.escapeHtml(displayTitle || "站内文章") + '</button>'
@@ -405,8 +410,18 @@
       const sourceIndex = sourceIndexes.get(item.sourceId) || "?";
       return '<div class="evidence-card"><small>EV-' + (index + 1) + ' · DB #' + item.id + ' · SRC-' + sourceIndex +
         ' · SCORE ' + Number(item.score || 0).toFixed(2) + '</small><p>' + root.util.escapeHtml(item.content || "") + '</p>' +
-        '<small>' + root.util.escapeHtml(item.locator || "") + (claims.length ? ' · 支撑 ' + root.util.escapeHtml(claims.join(", ")) : '') + '</small></div>';
+        '<small>' + root.util.escapeHtml(displayLocator(item.locator)) + (claims.length ? ' · 支撑 ' + root.util.escapeHtml(claims.join(", ")) : '') + '</small></div>';
     }).join("") : '<div class="empty-copy">没有 Evidence</div>';
+  }
+
+  function displayLocator(locator) {
+    const labels = {
+      "离线内置语料": "外部来源摘要",
+      "fetched document": "已抓取原文",
+      "published internal article": "站内已发布文章",
+      "web search snippet": "网页搜索摘要"
+    };
+    return labels[locator] || locator || "";
   }
 
   function renderCitations(citations, evidence, sources) {
@@ -513,8 +528,8 @@
     });
     document.getElementById("researchProvider").addEventListener("change", function (event) {
       const hint = document.getElementById("providerHint");
-      if (event.target.value === "openai-tools") {
-        hint.textContent = "在线模式会调用模型与工具并产生真实 API 费用；API Key 仅保存在 Agent 服务端。";
+      if (event.target.value === "deepseek-tools") {
+        hint.textContent = "在线模式调用 DeepSeek 与网页搜索/安全抓取工具并产生真实 API 费用；Key 仅保存在 Agent 服务端。";
       } else {
         hint.textContent = "离线模式不消耗模型额度，使用固定语料验证完整工作流。";
       }

@@ -16,7 +16,7 @@ class AiProviderServiceTest {
         AgentServiceClient client = mock(AgentServiceClient.class);
         Map<String, Object> health = Map.of(
                 "status", "UP",
-                "providers", Map.of("offline-demo", true, "openai-tools", false));
+                "providers", Map.of("offline-demo", true, "deepseek-tools", false));
         when(client.health()).thenReturn(health);
 
         assertThat(new AiProviderService(client).capabilities()).isEqualTo(health);
@@ -32,6 +32,6 @@ class AiProviderServiceTest {
         assertThat(result.get("status")).isEqualTo("DOWN");
         Map<?, ?> providers = (Map<?, ?>) result.get("providers");
         assertThat(providers.get("offline-demo")).isEqualTo(false);
-        assertThat(providers.get("openai-tools")).isEqualTo(false);
+        assertThat(providers.get("deepseek-tools")).isEqualTo(false);
     }
 }

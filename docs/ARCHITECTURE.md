@@ -194,8 +194,8 @@ POST /api/ai/tasks
 - 报告发布先持久化 `APPROVED`，文章服务暂时失败时可由用户重试；
 - `ai_published_article.report_id` 唯一，重复审核或网络重试返回同一 `article_id`；
 - 默认 Agent 是离线确定性提供器，只证明工作流结构与可靠性，不证明实时搜索或模型答案质量；
-- `ai_task.provider` 把执行模式固定到单个任务：`offline-demo` 与 `openai-tools` 可以在同一套服务中并存，MQ 重投仍使用任务原 Provider，不受进程默认值变化影响；
-- 可选 `openai-tools` 把 Responses API 的结构化 Planner/Decision/Writer/Critic 与 Hosted Web Search 拆开；Agent 只在服务端读取 Key，`/api/ai/providers` 仅暴露能力状态和模型名；当前通过 MockTransport 验证契约，真实联网质量需使用自有 Key 单独验收；
+- `ai_task.provider` 把执行模式固定到单个任务：`offline-demo` 与 `deepseek-tools` 可以在同一套服务中并存，MQ 重投仍使用任务原 Provider，不受进程默认值变化影响；
+- 可选 `deepseek-tools` 通过 DeepSeek Chat Completions 完成结构化 Planner/Decision/Writer/Critic；网页检索由独立的 Bing RSS 适配器完成，候选页再交给安全抓取器读取。Agent 只在服务端读取 Key，`/api/ai/providers` 仅暴露能力状态和模型名；
 - `web_fetch` 只允许搜索候选 URL，并逐跳限制 HTTP(S)、80/443、公网 DNS、重定向、内容类型、大小和超时；生产环境仍应增加 egress proxy，应用层检查不能完全消除 DNS rebinding 竞态。
 
 ### 5.3 评测与可观测性

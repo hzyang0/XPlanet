@@ -23,7 +23,7 @@ public class AiProviderService {
             unavailable.put("defaultProvider", "offline-demo");
             unavailable.put("providers", Map.of(
                     "offline-demo", false,
-                    "openai-tools", false));
+                    "deepseek-tools", false));
             unavailable.put("message", "Agent 服务暂时不可用");
             return unavailable;
         }

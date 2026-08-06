@@ -38,7 +38,7 @@ class OfflineInternalSearchProvider:
         hits = [
             SearchHit(
                 url=document.url,
-                title=f"离线语料：{document.title}",
+                title=document.title,
                 snippet=document.content,
                 sourceType="offline",
             )

@@ -174,7 +174,7 @@ public class AiTaskService {
         }
         String provider = request.getProvider() == null || request.getProvider().isBlank()
                 ? "offline-demo" : request.getProvider().trim().toLowerCase();
-        if (!("offline-demo".equals(provider) || "openai-tools".equals(provider))) {
+        if (!("offline-demo".equals(provider) || "deepseek-tools".equals(provider))) {
             throw new BizException(ErrorCode.PARAM_INVALID);
         }
         NormalizedRequest normalized = new NormalizedRequest(question, provider,

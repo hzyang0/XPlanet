@@ -171,7 +171,8 @@ def test_offline_internal_sources_use_real_corpus_urls() -> None:
     assert len(result.searchHits) == 2
     assert all(hit.url.startswith("https://") for hit in result.searchHits)
     assert all(hit.sourceType == "offline" for hit in result.searchHits)
-    assert all(hit.title.startswith("离线语料：") for hit in result.searchHits)
+    assert all(not hit.title.startswith("离线语料：") for hit in result.searchHits)
+    assert all(hit.url.startswith("https://") for hit in result.searchHits)
     assert all("/api/article/offline-" not in hit.url for hit in result.searchHits)
 
 

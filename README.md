@@ -34,7 +34,7 @@
 - **服务协作与降级**：OpenFeign 用于需要立即结果的短调用；user 服务故障返回兜底作者名，MQ 故障由 Outbox 退避重试，缓存重建抢锁失败直接回源
 - **完整社区闭环**：文章分页与详情、两级评论、点赞/取消、热榜，以及研究报告审核发布和知识回流
 
-> 每个研究任务都可在工作台选择 `offline-demo` 或 `openai-tools`。离线模式用于零成本、可复现验收；在线模式通过 Responses API 完成结构化规划/决策/写作和 Hosted Web Search。API Key 只存在 Agent 服务端，前端只读取“在线能力是否可用”。在线质量仍应使用自己的 Key 和代表性问题单独验收，不能用离线评测代替。
+> 每个研究任务都可在工作台选择 `offline-demo` 或 `deepseek-tools`。离线模式使用固定的外部网页摘要进行零成本、可复现验收；在线模式由 DeepSeek 完成结构化规划、决策、写作和 Critic，并调用独立网页搜索与安全抓取工具。API Key 只存在 Agent 服务端，前端只读取“在线能力是否可用”。
 
 > 已引入轻量 Spring Cloud Gateway 作为统一外部入口；注册中心、分布式事务和监控全家桶仍按业务规模暂不引入。
 > 高可用(集群/哨兵/多实例)作为演进方向写在 [`docs/HA-AND-DEGRADE.md`](docs/HA-AND-DEGRADE.md),按需扩展。
@@ -126,11 +126,12 @@ $env:AI_CONTROL_URL="http://localhost:8084"
 默认离线模式无需模型密钥。只有明确需要联网研究并接受外部 API 成本时才设置 Key；`AGENT_PROVIDER` 仅用于健康信息中的默认提示，实际执行模式由每个任务的 `provider` 决定：
 
 ```powershell
-$env:OPENAI_API_KEY="replace-with-your-key"
-$env:OPENAI_MODEL="gpt-5.6-terra"
+$env:DEEPSEEK_API_KEY="replace-with-your-key"
+$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+$env:DEEPSEEK_BASE_URL="https://api.deepseek.com"
 ```
 
-全 Docker 模式可直接编辑被 Git 忽略的 `.env`，填写 `OPENAI_API_KEY` 后执行 `docker compose -f docker/docker-compose-app.yml up -d --force-recreate agent`。工作台刷新任务列表时会重新读取 Agent 能力：Key 未配置时在线选项禁用，配置后在线选项启用。不要把 `.env` 提交到仓库。
+全 Docker 模式可直接编辑被 Git 忽略的 `.env`，填写 `DEEPSEEK_API_KEY` 后执行 `docker compose --env-file .env -f docker/docker-compose-infra.yml -f docker/docker-compose-app.yml up -d --build agent`。工作台刷新任务列表时会重新读取 Agent 能力：Key 未配置时在线选项禁用，配置后在线选项启用。不要把 `.env` 提交到仓库，也不要把 Key 粘贴到浏览器或聊天中。
 
 Gateway 容器默认暴露宿主机 8080；若 8080 已占用，启动脚本自动尝试 18080。浏览器工作台会探测两个端口并保存实际可用地址，因此不同浏览器不再依赖各自旧的 localStorage 配置。
 

@@ -95,7 +95,7 @@ class AiTaskServiceTest {
         AiTaskRecord existing = task(9L, "QUEUED", 0);
         when(taskMapper.findByIdempotencyKey(7L, "same-key")).thenReturn(existing);
         CreateResearchTaskRequest online = request(existing.getQuestion());
-        online.setProvider("openai-tools");
+        online.setProvider("deepseek-tools");
 
         assertThatThrownBy(() -> service.create(7L, "same-key", online))
                 .isInstanceOf(BizException.class)

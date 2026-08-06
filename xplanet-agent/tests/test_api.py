@@ -27,11 +27,11 @@ def test_online_provider_requires_server_side_key(monkeypatch) -> None:
             "runId": "run-online-1",
             "userId": 7,
             "question": "test online provider",
-            "provider": "openai-tools",
+            "provider": "deepseek-tools",
         },
     )
     assert response.status_code == 422
-    assert "OPENAI_API_KEY" in response.json()["detail"]
+    assert "DEEPSEEK_API_KEY" in response.json()["detail"]
 
 
 def test_execute_requires_internal_token() -> None:

@@ -176,7 +176,7 @@ class AiResultPersistenceServiceTest {
     @Test
     void shouldRejectResultFromAProviderDifferentFromTheRequestedOne() {
         AiResearchResult invalid = result();
-        invalid.setProvider("openai-tools");
+        invalid.setProvider("deepseek-tools");
         when(resultMapper.insertInbox(AiResultPersistenceService.CONSUMER, "event-1")).thenReturn(1);
         when(taskMapper.findInternalForUpdate(1L)).thenReturn(task("RUNNING"));
 

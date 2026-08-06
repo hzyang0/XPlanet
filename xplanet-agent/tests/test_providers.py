@@ -4,11 +4,7 @@ import httpx
 import pytest
 
 from xplanet_agent.models import TaskCommand, ToolAction
-from xplanet_agent.providers import OpenAIHostedSearchProvider, OpenAIModelProvider
-from xplanet_agent.tools import OfflineDocumentFetcher
-from xplanet_agent.workflow import ResearchWorkflow
-
-from test_workflow import RecordingSink
+from xplanet_agent.providers import BingRssSearchProvider, DeepSeekModelProvider
 
 
 def command(**overrides) -> TaskCommand:
@@ -18,232 +14,131 @@ def command(**overrides) -> TaskCommand:
         "taskId": 9,
         "runId": "run-provider-1",
         "userId": 7,
-        "question": "How should recoverable agent checkpoints be designed?",
-        "maxSources": 1,
-        "maxToolCalls": 2,
+        "question": "如何设计可恢复的 Agent 检查点？",
+        "provider": "deepseek-tools",
+        "maxSources": 2,
+        "maxToolCalls": 4,
         "maxTokens": 4000,
     }
     values.update(overrides)
     return TaskCommand(**values)
 
 
-def json_response(data: dict, input_tokens: int = 10, output_tokens: int = 5) -> dict:
+def chat_response(data: dict, input_tokens: int = 10, output_tokens: int = 5) -> dict:
     return {
-        "output": [
-            {
-                "type": "message",
-                "content": [{"type": "output_text", "text": json.dumps(data)}],
-            }
-        ],
-        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        "choices": [{"message": {"role": "assistant", "content": json.dumps(data, ensure_ascii=False)}}],
+        "usage": {"prompt_tokens": input_tokens, "completion_tokens": output_tokens},
     }
 
 
-def test_openai_model_provider_uses_structured_planning_and_preserves_usage() -> None:
-    captured: list[dict] = []
+def test_deepseek_model_provider_uses_chat_json_mode_and_preserves_usage() -> None:
+    captured: list[tuple[str, dict]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured.append(json.loads(request.content))
+        captured.append((str(request.url), json.loads(request.content)))
         assert request.headers["authorization"] == "Bearer test-key"
         assert request.headers["x-client-request-id"] == "run-provider-1"
-        return httpx.Response(
-            200,
-            json=json_response(
-                {
-                    "steps": [
-                        {
-                            "stepId": "checkpoint",
-                            "objective": "Study durable recovery",
-                            "searchQuery": "durable agent checkpoint recovery",
-                        }
-                    ]
-                },
-                120,
-                30,
-            ),
-        )
+        return httpx.Response(200, json=chat_response({
+            "steps": [{
+                "stepId": "checkpoint",
+                "objective": "研究持久化恢复",
+                "searchQuery": "Agent 检查点 持久化恢复",
+            }]
+        }, 120, 30))
 
-    provider = OpenAIModelProvider(
+    provider = DeepSeekModelProvider(
         api_key="test-key",
-        model="test-model",
-        base_url="https://api.example.test/v1",
+        model="deepseek-test",
+        base_url="https://api.example.test",
         transport=httpx.MockTransport(handler),
     )
     plan, usage = provider.plan(command(), command().question)
 
-    assert plan.steps[0].stepId == "checkpoint"
+    assert plan.steps[0].objective == "研究持久化恢复"
+    assert usage.provider == "deepseek"
     assert usage.inputTokens == 120
     assert usage.outputTokens == 30
-    assert captured[0]["text"]["format"]["type"] == "json_schema"
-    assert captured[0]["text"]["format"]["name"] == "planner"
-    assert captured[0]["text"]["format"]["strict"] is True
-    assert captured[0]["text"]["format"]["schema"]["additionalProperties"] is False
-    assert (
-        captured[0]["text"]["format"]["schema"]["$defs"]["PlanStep"]["additionalProperties"]
-        is False
-    )
-    assert captured[0]["max_output_tokens"] == 4000
+    assert captured[0][0].endswith("/chat/completions")
+    assert captured[0][1]["response_format"] == {"type": "json_object"}
+    assert captured[0][1]["max_tokens"] == 4000
+    assert "same natural language" in captured[0][1]["messages"][1]["content"]
+    assert "Required JSON Schema" in captured[0][1]["messages"][1]["content"]
 
 
-def hosted_search_payload(*, source: bool = True, calls: int = 1) -> dict:
-    output = []
-    for _ in range(calls):
-        output.append(
-            {
-                "type": "web_search_call",
-                "action": {
-                    "sources": (
-                        [
-                            {
-                                "type": "url",
-                                "url": "https://github.com/hzyang0/XPlanet",
-                                "title": "XPlanet repository",
-                            }
-                        ]
-                        if source
-                        else []
-                    )
-                },
-            }
-        )
-    output.append(
-        {
-            "type": "message",
-            "content": [{"type": "output_text", "text": "XPlanet persists Agent checkpoints."}],
-        }
-    )
-    return {"output": output, "usage": {"input_tokens": 50, "output_tokens": 20}}
-
-
-def test_hosted_search_is_one_bounded_tool_action_and_returns_candidates() -> None:
+def test_deepseek_writer_requires_question_language() -> None:
     captured: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured.append(json.loads(request.content))
-        return httpx.Response(200, json=hosted_search_payload())
+        payload = json.loads(request.content)
+        captured.append(payload)
+        return httpx.Response(200, json=chat_response({
+            "title": "研究报告：检查点恢复",
+            "content": "## 有证据支持的发现\n\n- [claim-1] 检查点需要持久化。[ev-1]",
+            "claims": [{
+                "claimId": "claim-1",
+                "statement": "检查点需要持久化。",
+                "evidenceRefs": ["ev-1"],
+                "confidence": 0.9,
+            }],
+        }))
 
-    provider = OpenAIHostedSearchProvider(
-        api_key="test-key",
-        model="test-model",
-        transport=httpx.MockTransport(handler),
+    provider = DeepSeekModelProvider(api_key="test-key", transport=httpx.MockTransport(handler))
+    from xplanet_agent.models import EvidenceResult, ResearchPlan, PlanStep, SourceResult
+    plan = ResearchPlan(steps=[PlanStep(stepId="one", objective="研究", searchQuery="检查点")])
+    source = SourceResult(
+        sourceRef="src-1",
+        url="https://example.com",
+        title="示例",
+        contentHash="a" * 64,
+        retrievedAt="2026-08-06T00:00:00Z",
     )
-    action = ToolAction(name="web_search", query="agent checkpoints", reason="find sources")
+    evidence = EvidenceResult(evidenceRef="ev-1", sourceRef="src-1", locator="已抓取原文", content="检查点需要持久化。", contentHash="b" * 64, score=0.9)
+    draft, _ = provider.write(command(), command().question, plan, [source], [evidence], None)
+
+    assert draft.title.startswith("研究报告")
+    assert "same language as the question" in captured[0]["messages"][1]["content"]
+
+
+def test_bing_rss_search_returns_bounded_external_candidates() -> None:
+    rss = """<?xml version="1.0"?><rss><channel>
+      <item><title>LangGraph 文档</title><link>https://docs.example.com/langgraph</link><description>节点与检查点</description></item>
+      <item><title>第二项</title><link>https://example.com/two</link><description><![CDATA[<b>恢复</b>机制]]></description></item>
+    </channel></rss>"""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, text=rss)
+
+    provider = BingRssSearchProvider(transport=httpx.MockTransport(handler))
+    action = ToolAction(name="web_search", query="Agent 检查点", reason="查资料")
     result = provider.search(command(), action, 1)
 
-    assert result.searchHits[0].url == "https://github.com/hzyang0/XPlanet"
-    assert result.usage[0].nodeName == "EXECUTE_TOOL"
-    assert result.usage[0].outputTokens == 20
-    assert captured[0]["tools"] == [{"type": "web_search", "search_context_size": "medium"}]
-    assert captured[0]["tool_choice"] == "required"
-    assert captured[0]["max_tool_calls"] == 1
+    assert len(result.searchHits) == 1
+    assert result.searchHits[0].url == "https://docs.example.com/langgraph"
+    assert result.searchHits[0].sourceType == "web"
+    assert "format=rss" in str(captured[0].url)
+    assert not result.usage
 
 
-def test_openai_components_run_inside_dynamic_workflow() -> None:
-    decision_count = 0
-
-    def model_handler(request: httpx.Request) -> httpx.Response:
-        nonlocal decision_count
-        payload = json.loads(request.content)
-        node = payload["text"]["format"]["name"]
-        if node == "planner":
-            data = {
-                "steps": [
-                    {"stepId": "one", "objective": "Find source", "searchQuery": "XPlanet"}
-                ]
-            }
-        elif node == "decide_action":
-            decision_count += 1
-            if decision_count == 1:
-                data = {"name": "web_search", "query": "XPlanet", "url": None, "reason": "find"}
-            elif decision_count == 2:
-                data = {
-                    "name": "web_fetch",
-                    "query": None,
-                    "url": "https://github.com/hzyang0/XPlanet",
-                    "reason": "read",
-                }
-            else:
-                data = {
-                    "name": "finish_research",
-                    "query": None,
-                    "url": None,
-                    "reason": "enough",
-                }
-        elif node == "writer":
-            data = {
-                "title": "Recoverable Agent",
-                "content": "[claim-1] XPlanet persists Agent checkpoints. [ev-1]\n\n## 不确定性与冲突\n\n- none",
-                "claims": [
-                    {
-                        "claimId": "claim-1",
-                        "statement": "XPlanet persists Agent checkpoints.",
-                        "evidenceRefs": ["ev-1"],
-                        "confidence": 0.9,
-                    }
-                ],
-            }
-        else:
-            assert node == "critic"
-            data = {
-                "approved": True,
-                "qualityScore": 0.9,
-                "claimSupportScore": 0.9,
-                "issues": [],
-                "uncertainties": [],
-                "conflicts": [],
-                "supplementalQuery": None,
-            }
-        return httpx.Response(200, json=json_response(data))
-
-    def search_handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=hosted_search_payload())
-
-    model = OpenAIModelProvider(api_key="test-key", transport=httpx.MockTransport(model_handler))
-    search = OpenAIHostedSearchProvider(
-        api_key="test-key", transport=httpx.MockTransport(search_handler)
-    )
-    sink = RecordingSink()
-    result = ResearchWorkflow(
-        model_provider=model,
-        search_provider=search,
-        document_fetcher=OfflineDocumentFetcher(),
-    ).run(command(), sink)
-
-    assert result.provider == "openai-tools"
-    assert result.title == "Recoverable Agent"
-    assert result.sources[0].url == "https://github.com/hzyang0/XPlanet"
-    assert len(result.usage) == 6
-    assert sink.saved_nodes.count("EXECUTE_TOOL") == 2
-
-
-def test_hosted_search_rejects_missing_sources_and_multiple_internal_calls() -> None:
-    def build_provider(payload: dict) -> OpenAIHostedSearchProvider:
-        return OpenAIHostedSearchProvider(
-            api_key="test-key",
-            transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload)),
-        )
-
+def test_bing_rss_search_rejects_invalid_or_empty_results() -> None:
     action = ToolAction(name="web_search", query="test", reason="test")
+    invalid = BingRssSearchProvider(transport=httpx.MockTransport(lambda _: httpx.Response(200, text="bad")))
+    with pytest.raises(ValueError, match="invalid RSS"):
+        invalid.search(command(), action, 1)
+    empty = BingRssSearchProvider(transport=httpx.MockTransport(lambda _: httpx.Response(200, text="<rss/>")))
     with pytest.raises(ValueError, match="no source candidates"):
-        build_provider(hosted_search_payload(source=False)).search(command(), action, 1)
-    with pytest.raises(ValueError, match="exactly one"):
-        build_provider(hosted_search_payload(calls=2)).search(command(), action, 1)
+        empty.search(command(), action, 1)
 
 
-def test_openai_providers_require_explicit_api_key() -> None:
-    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
-        OpenAIModelProvider(api_key="")
-    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
-        OpenAIHostedSearchProvider(api_key="")
-
-
-def test_openai_model_provider_rejects_invalid_structured_output() -> None:
-    provider = OpenAIModelProvider(
+def test_deepseek_provider_requires_key_and_rejects_invalid_json() -> None:
+    with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
+        DeepSeekModelProvider(api_key="")
+    provider = DeepSeekModelProvider(
         api_key="test-key",
         transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, json=json_response({"unexpected": True}))
+            lambda _: httpx.Response(200, json={"choices": [{"message": {"content": "not-json"}}]})
         ),
     )
-
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="not valid JSON"):
         provider.plan(command(), command().question)

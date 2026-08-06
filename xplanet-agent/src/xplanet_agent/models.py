@@ -16,7 +16,7 @@ class TaskCommand(BaseModel):
     traceId: str | None = None
     userId: int
     question: str
-    provider: Literal["offline-demo", "openai-tools"] = "offline-demo"
+    provider: Literal["offline-demo", "deepseek-tools"] = "offline-demo"
     maxSources: int = Field(default=5, ge=1, le=20)
     maxToolCalls: int = Field(default=10, ge=1, le=50)
     maxTokens: int = Field(default=8000, ge=1000, le=100_000)

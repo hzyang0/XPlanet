@@ -312,7 +312,7 @@ $taskId = $task.data.id
 
 为什么必须有 `Idempotency-Key`：如果浏览器超时后重试，不能创建两个一样的付费任务。相同用户、相同 key、相同请求返回原任务；相同 key 用于不同请求会被拒绝。
 
-`provider` 为什么也写进任务：它是这次研究的执行契约。`offline-demo` 使用固定语料和确定性 Writer，适合验证流程；`openai-tools` 使用服务端 Key 调 Responses API 和 Hosted Web Search。它会参与幂等请求对比，并随 MQ 命令持久化，因此任务重试时不会悄悄切换模式。
+`provider` 为什么也写进任务：它是这次研究的执行契约。`offline-demo` 使用固定外部来源摘要和确定性 Writer，适合验证流程；`deepseek-tools` 使用服务端 DeepSeek Key 完成模型推理，并调用网页搜索与安全抓取工具。它会参与幂等请求对比，并随 MQ 命令持久化，因此任务重试时不会悄悄切换模式。
 
 查询任务：
 

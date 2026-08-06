@@ -478,7 +478,7 @@ class ResearchWorkflow:
                         if document
                         else "internal-article"
                         if candidate.sourceType == "internal"
-                        else "offline-corpus"
+                        else "external-summary"
                         if candidate.sourceType == "offline"
                         else "search-snippet"
                     ),
@@ -502,13 +502,13 @@ class ResearchWorkflow:
                     evidenceRef=evidence_ref,
                     sourceRef=source_ref,
                     locator=(
-                        "fetched document"
+                        "已抓取原文"
                         if document
-                        else "published internal article"
+                        else "站内已发布文章"
                         if candidate.sourceType == "internal"
-                        else "离线内置语料"
+                        else "外部来源摘要"
                         if candidate.sourceType == "offline"
-                        else "web search snippet"
+                        else "网页搜索摘要"
                     ),
                     content=content[:4000],
                     contentHash=hashlib.sha256(content[:4000].encode("utf-8")).hexdigest(),

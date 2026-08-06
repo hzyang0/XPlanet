@@ -8,7 +8,7 @@ from fastapi import FastAPI, Header, HTTPException
 
 from .models import ResearchResult, TaskCommand
 from .progress import HttpProgressSink
-from .providers import OpenAIHostedSearchProvider, OpenAIModelProvider
+from .providers import BingRssSearchProvider, DeepSeekModelProvider
 from .tools import HttpDocumentFetcher, HttpInternalSearchProvider, OfflineInternalSearchProvider
 from .workflow import ResearchWorkflow, TaskCancelled
 
@@ -45,20 +45,15 @@ def _build_offline_workflow() -> ResearchWorkflow:
 
 
 def _build_online_workflow() -> ResearchWorkflow | None:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not api_key:
         return None
-    model = os.getenv("OPENAI_MODEL", "gpt-5.6-terra")
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-    model_provider = OpenAIModelProvider(api_key=api_key, model=model, base_url=base_url)
-    search_provider = OpenAIHostedSearchProvider(
-        api_key=api_key,
-        model=model,
-        base_url=base_url,
-    )
+    model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    model_provider = DeepSeekModelProvider(api_key=api_key, model=model, base_url=base_url)
     return ResearchWorkflow(
         model_provider=model_provider,
-        search_provider=search_provider,
+        search_provider=BingRssSearchProvider(),
         document_fetcher=HttpDocumentFetcher(),
         internal_search_provider=_internal_search_provider(),
         after_checkpoint=_optional_crash_after_checkpoint,
@@ -74,9 +69,9 @@ online_workflow = _build_online_workflow()
 def _workflow_for(provider: str) -> ResearchWorkflow:
     if provider == "offline-demo":
         return workflow
-    if provider == "openai-tools":
+    if provider == "deepseek-tools":
         if online_workflow is None:
-            raise ValueError("openai-tools is unavailable: configure OPENAI_API_KEY and restart Agent")
+            raise ValueError("deepseek-tools is unavailable: configure DEEPSEEK_API_KEY and restart Agent")
         return online_workflow
     raise ValueError(f"unsupported Agent provider: {provider}")
 
@@ -91,16 +86,16 @@ def _require_internal_token(presented: str | None) -> str:
 @app.get("/health")
 def health() -> dict[str, object]:
     default_provider = os.getenv("AGENT_PROVIDER", "offline-demo").strip().lower()
-    if default_provider not in {"offline-demo", "openai-tools"}:
+    if default_provider not in {"offline-demo", "deepseek-tools"}:
         default_provider = "offline-demo"
     return {
         "status": "UP",
         "defaultProvider": default_provider,
         "providers": {
             "offline-demo": True,
-            "openai-tools": online_workflow is not None,
+            "deepseek-tools": online_workflow is not None,
         },
-        "onlineModel": os.getenv("OPENAI_MODEL", "gpt-5.6-terra") if online_workflow else "",
+        "onlineModel": os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash") if online_workflow else "",
     }
 
 

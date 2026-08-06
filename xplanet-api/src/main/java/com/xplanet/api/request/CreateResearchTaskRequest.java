@@ -15,7 +15,7 @@ public class CreateResearchTaskRequest {
     @Size(max = 2000, message = "研究问题不能超过2000字符")
     private String question;
 
-    @Pattern(regexp = "offline-demo|openai-tools", message = "执行模式只支持 offline-demo 或 openai-tools")
+    @Pattern(regexp = "offline-demo|deepseek-tools", message = "执行模式只支持 offline-demo 或 deepseek-tools")
     private String provider = "offline-demo";
 
     @Min(value = 1, message = "来源上限至少为1")
