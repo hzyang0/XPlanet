@@ -353,7 +353,8 @@
     document.getElementById("evidenceCount").textContent = (report.evidence || []).length;
     document.getElementById("citationCount").textContent = (report.citations || []).length;
     renderSources(report.sources || []);
-    renderEvidence(report.evidence || [], report.citations || []);
+    renderEvidence(report.evidence || [], report.citations || [], report.sources || []);
+    renderCitations(report.citations || [], report.evidence || [], report.sources || []);
     renderUsage(report.usage || []);
     const published = Boolean(report.publishArticleId);
     document.getElementById("approveReportButton").hidden = published;
@@ -378,7 +379,7 @@
         : url
           ? '<a href="' + root.util.escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + root.util.escapeHtml(displayTitle || url) + '</a>'
           : '<b>' + root.util.escapeHtml(displayTitle) + '</b>';
-      return '<div class="source-card"><div class="source-card-meta"><small>SOURCE ' + (index + 1) + ' · #' + source.id + '</small>' +
+      return '<div class="source-card"><div class="source-card-meta"><small>SRC-' + (index + 1) + ' · DB #' + source.id + '</small>' +
         '<span class="source-kind">' + sourceKind + '</span></div>' +
         link +
         '<small title="' + root.util.escapeHtml(source.contentHash || "") + '">' + root.util.escapeHtml(shortHash(source.contentHash)) + '</small></div>';
@@ -390,20 +391,48 @@
     return text.length > 16 ? text.slice(0, 12) + "…" : text;
   }
 
-  function renderEvidence(evidence, citations) {
+  function renderEvidence(evidence, citations, sources) {
     const bindings = new Map();
+    const sourceIndexes = new Map(sources.map(function (source, index) { return [source.id, index + 1]; }));
     citations.forEach(function (citation) {
       const list = bindings.get(citation.evidenceId) || [];
-      list.push(citation.claimId + " (" + Number(citation.supportScore || 0).toFixed(2) + ")");
+      list.push("[" + citation.claimId + "]");
       bindings.set(citation.evidenceId, list);
     });
     const box = document.getElementById("evidenceList");
-    box.innerHTML = evidence.length ? evidence.map(function (item) {
+    box.innerHTML = evidence.length ? evidence.map(function (item, index) {
       const claims = bindings.get(item.id) || [];
-      return '<div class="evidence-card"><small>EVIDENCE #' + item.id + ' · SOURCE #' + item.sourceId +
+      const sourceIndex = sourceIndexes.get(item.sourceId) || "?";
+      return '<div class="evidence-card"><small>EV-' + (index + 1) + ' · DB #' + item.id + ' · SRC-' + sourceIndex +
         ' · SCORE ' + Number(item.score || 0).toFixed(2) + '</small><p>' + root.util.escapeHtml(item.content || "") + '</p>' +
-        '<small>' + root.util.escapeHtml(item.locator || "") + (claims.length ? ' · CLAIM ' + root.util.escapeHtml(claims.join(", ")) : '') + '</small></div>';
+        '<small>' + root.util.escapeHtml(item.locator || "") + (claims.length ? ' · 支撑 ' + root.util.escapeHtml(claims.join(", ")) : '') + '</small></div>';
     }).join("") : '<div class="empty-copy">没有 Evidence</div>';
+  }
+
+  function renderCitations(citations, evidence, sources) {
+    const box = document.getElementById("citationList");
+    const evidenceById = new Map(evidence.map(function (item, index) {
+      return [item.id, { item: item, index: index + 1 }];
+    }));
+    const sourceById = new Map(sources.map(function (item, index) {
+      return [item.id, { item: item, index: index + 1 }];
+    }));
+    box.innerHTML = citations.length ? citations.map(function (citation) {
+      const evidenceEntry = evidenceById.get(citation.evidenceId);
+      const sourceEntry = evidenceEntry && sourceById.get(evidenceEntry.item.sourceId);
+      const evidenceRef = evidenceEntry ? "ev-" + evidenceEntry.index : "ev-?";
+      const sourceRef = sourceEntry ? "src-" + sourceEntry.index : "src-?";
+      const sourceTitle = sourceEntry
+        ? String(sourceEntry.item.title || "未知来源").replace(/^(?:站内知识|离线语料)：\s*/, "")
+        : "来源记录缺失";
+      return '<div class="citation-card"><div class="citation-chain">' +
+        '<span class="citation-node claim-node">[' + root.util.escapeHtml(citation.claimId) + ']</span>' +
+        '<span class="citation-arrow">引用 →</span>' +
+        '<span class="citation-node evidence-node">[' + evidenceRef + ']</span>' +
+        '<span class="citation-arrow">来自 →</span>' +
+        '<span class="citation-node source-node">[' + sourceRef + ']</span></div>' +
+        '<small>支持度 ' + Number(citation.supportScore || 0).toFixed(2) + ' · ' + root.util.escapeHtml(sourceTitle) + '</small></div>';
+    }).join("") : '<div class="empty-copy">没有引用关系</div>';
   }
 
   function renderUsage(usage) {

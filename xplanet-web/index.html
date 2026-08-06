@@ -6,7 +6,7 @@
   <meta name="description" content="XPlanet 可追溯技术研究 Agent 与知识社区">
   <title>XPlanet Research · 可追溯技术研究 Agent</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2317594a'/%3E%3Ctext x='32' y='41' text-anchor='middle' font-family='monospace' font-size='25' font-weight='700' fill='white'%3EXP%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="assets/app.css?v=20260806-5">
+  <link rel="stylesheet" href="assets/app.css?v=20260806-6">
 </head>
 <body>
   <header class="site-header">
@@ -172,9 +172,28 @@
             </div>
 
             <details class="evidence-section" open>
-              <summary>来源与证据详情</summary>
-              <div id="sourceList" class="source-list"></div>
-              <div id="evidenceList" class="evidence-list"></div>
+              <summary>可追溯性详情</summary>
+              <section class="traceability-block source-block" aria-labelledby="sourceBlockTitle">
+                <div class="traceability-heading">
+                  <span class="traceability-index">01</span>
+                  <div><h3 id="sourceBlockTitle">来源文档</h3><p>研究所依据的网页、站内文章或离线语料原始页面。</p></div>
+                </div>
+                <div id="sourceList" class="source-list"></div>
+              </section>
+              <section class="traceability-block evidence-block" aria-labelledby="evidenceBlockTitle">
+                <div class="traceability-heading">
+                  <span class="traceability-index">02</span>
+                  <div><h3 id="evidenceBlockTitle">证据片段</h3><p>从来源中提取并保存的具体内容，报告只能引用这些片段。</p></div>
+                </div>
+                <div id="evidenceList" class="evidence-list"></div>
+              </section>
+              <section class="traceability-block citation-block" aria-labelledby="citationBlockTitle">
+                <div class="traceability-heading">
+                  <span class="traceability-index">03</span>
+                  <div><h3 id="citationBlockTitle">引用关系</h3><p>把报告论点绑定到证据，再追溯到来源：Claim → Evidence → Source。</p></div>
+                </div>
+                <div id="citationList" class="citation-list"></div>
+              </section>
             </details>
             <details class="evidence-section">
               <summary>模型用量</summary>
@@ -229,10 +248,10 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script src="js/api.js?v=20260806-5"></script>
-  <script src="js/auth.js?v=20260806-5"></script>
-  <script src="js/community.js?v=20260806-5"></script>
-  <script src="js/research.js?v=20260806-5"></script>
-  <script src="js/app.js?v=20260806-5"></script>
+  <script src="js/api.js?v=20260806-6"></script>
+  <script src="js/auth.js?v=20260806-6"></script>
+  <script src="js/community.js?v=20260806-6"></script>
+  <script src="js/research.js?v=20260806-6"></script>
+  <script src="js/app.js?v=20260806-6"></script>
 </body>
 </html>
