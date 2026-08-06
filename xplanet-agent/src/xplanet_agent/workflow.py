@@ -575,19 +575,26 @@ class ResearchWorkflow:
             claim_ids.add(claim.claimId)
             if claim.claimId not in content:
                 raise ValueError("writer report does not expose its claim identity")
+            # The control-plane citation table deliberately has one row per claim.
+            # A WriterDraft can still name several supporting evidence references in
+            # the rendered report, but persistence needs one canonical binding. Pick
+            # the strongest deterministic lexical match and keep the input order as
+            # the tie-breaker, so retries produce the same result.
+            candidates: list[CitationResult] = []
             for evidence_ref in dict.fromkeys(claim.evidenceRefs):
                 item = evidence_by_ref.get(evidence_ref)
                 if item is None:
                     raise ValueError("writer returned an unknown evidence citation")
                 if evidence_ref not in content:
                     raise ValueError("writer report does not expose its evidence citation")
-                citations.append(
+                candidates.append(
                     CitationResult(
                         claimId=claim.claimId,
                         evidenceRef=evidence_ref,
                         supportScore=lexical_support_score(claim.statement, item.content),
                     )
                 )
+            citations.append(max(candidates, key=lambda citation: citation.supportScore))
         if not citations:
             raise ValueError("writer returned no claim-evidence citation")
         return citations

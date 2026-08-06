@@ -6,6 +6,7 @@ from xplanet_agent.tools import (
     HttpDocumentFetcher,
     HttpInternalSearchProvider,
     OfflineInternalSearchProvider,
+    ToolRegistry,
     _concise_internal_content,
 )
 
@@ -105,6 +106,19 @@ def test_http_fetcher_rejects_large_or_binary_responses() -> None:
     )
     with pytest.raises(ValueError, match="size limit"):
         large.fetch(command(), action("https://example.com/large"))
+
+
+def test_tool_registry_skips_a_rejected_external_fetch_and_allows_research_to_continue() -> None:
+    fetcher = HttpDocumentFetcher(
+        transport=httpx.MockTransport(lambda request: httpx.Response(403)),
+        resolver=lambda host: ["93.184.216.34"],
+    )
+    registry = ToolRegistry(OfflineInternalSearchProvider(), fetcher)
+
+    result = registry.execute(command(), action("https://example.com/rejected"))
+
+    assert result.document is None
+    assert result.searchHits == []
 
 
 def test_internal_search_uses_token_bound_topk_and_public_article_url() -> None:

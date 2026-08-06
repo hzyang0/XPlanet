@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from xplanet_agent.models import TaskCommand, ToolAction
+from xplanet_agent.models import ClaimDraft, TaskCommand, ToolAction, WriterDraft
 from xplanet_agent.providers import BingRssSearchProvider, DeepSeekModelProvider
 
 
@@ -61,6 +61,7 @@ def test_deepseek_model_provider_uses_chat_json_mode_and_preserves_usage() -> No
     assert captured[0][0].endswith("/chat/completions")
     assert captured[0][1]["response_format"] == {"type": "json_object"}
     assert captured[0][1]["max_tokens"] == 4000
+    assert captured[0][1]["thinking"] == {"type": "disabled"}
     assert "same natural language" in captured[0][1]["messages"][1]["content"]
     assert "Required JSON Schema" in captured[0][1]["messages"][1]["content"]
 
@@ -97,6 +98,25 @@ def test_deepseek_writer_requires_question_language() -> None:
 
     assert draft.title.startswith("研究报告")
     assert "same language as the question" in captured[0]["messages"][1]["content"]
+
+
+def test_deepseek_writer_appends_missing_claim_evidence_map() -> None:
+    draft = WriterDraft(
+        title="报告",
+        content="## 结论\n\n需要持久化检查点。",
+        claims=[ClaimDraft(
+            claimId="claim-1",
+            statement="需要持久化检查点。",
+            evidenceRefs=["ev-1"],
+            confidence=0.9,
+        )],
+    )
+
+    normalized = DeepSeekModelProvider._ensure_markdown_citation_visibility("检查点如何恢复？", draft)
+
+    assert "## 引用映射" in normalized.content
+    assert "[claim-1]" in normalized.content
+    assert "[ev-1]" in normalized.content
 
 
 def test_bing_rss_search_returns_bounded_external_candidates() -> None:
@@ -142,3 +162,33 @@ def test_deepseek_provider_requires_key_and_rejects_invalid_json() -> None:
     )
     with pytest.raises(ValueError, match="not valid JSON"):
         provider.plan(command(), command().question)
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ('{"title":"plain"}', "plain"),
+        ('Here is the requested object:\n```json\n{"title":"fenced"}\n```', "fenced"),
+    ],
+)
+def test_deepseek_provider_accepts_wrapped_json_object(raw: str, expected: str) -> None:
+    assert DeepSeekModelProvider._parse_json_object(raw)["title"] == expected
+
+
+def test_deepseek_provider_retries_one_malformed_structured_response() -> None:
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        if len(calls) == 1:
+            return httpx.Response(200, json={"choices": [{"message": {"content": "not json"}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+        return httpx.Response(200, json=chat_response({"steps": [{"stepId": "one", "objective": "research", "searchQuery": "outbox"}]}, 20, 8))
+
+    provider = DeepSeekModelProvider(api_key="test-key", transport=httpx.MockTransport(handler))
+    _, usage = provider.plan(command(), command().question)
+
+    assert len(calls) == 2
+    assert "previous answer was not valid JSON" in calls[1]["messages"][-1]["content"]
+    assert usage.retryCount == 1
+    assert usage.inputTokens == 30
+    assert usage.outputTokens == 13

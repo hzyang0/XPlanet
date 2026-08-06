@@ -279,7 +279,14 @@ class ToolRegistry:
         if action.name == "web_search":
             return self._search_provider.search(command, action, command.maxSources)
         if action.name == "web_fetch":
-            document = self._document_fetcher.fetch(command, action)
+            try:
+                document = self._document_fetcher.fetch(command, action)
+            except (httpx.HTTPError, ValueError):
+                # An external site may reject automated retrieval (403), time out,
+                # or fail a safety validation.  The URL has still been recorded as
+                # attempted by the workflow; return an empty result so the Agent can
+                # choose another source instead of losing the whole research task.
+                return ToolExecutionResult(action=action)
             return ToolExecutionResult(action=action, document=document)
         if action.name == "internal_search":
             return self._internal_search_provider.search(

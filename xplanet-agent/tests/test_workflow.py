@@ -12,6 +12,7 @@ from xplanet_agent.models import (
     TaskCommand,
     ToolAction,
     ToolExecutionResult,
+    EvidenceResult,
 )
 from xplanet_agent.providers import OfflineModelProvider
 from xplanet_agent.workflow import ResearchWorkflow, TaskCancelled
@@ -290,3 +291,41 @@ def test_claim_requires_at_least_one_evidence_reference() -> None:
             evidenceRefs=[],
             confidence=0.1,
         )
+
+
+def test_writer_chooses_one_deterministic_citation_for_a_multi_evidence_claim() -> None:
+    evidence = [
+        EvidenceResult(
+            evidenceRef="ev-1",
+            sourceRef="src-1",
+            locator="test",
+            content="The unrelated document discusses another topic.",
+            contentHash="a" * 64,
+            score=0.8,
+        ),
+        EvidenceResult(
+            evidenceRef="ev-2",
+            sourceRef="src-2",
+            locator="test",
+            content="Transactional Outbox stores the database change and event together.",
+            contentHash="b" * 64,
+            score=0.8,
+        ),
+    ]
+
+    citations = ResearchWorkflow._validate_claims_and_build_citations(
+        [
+            ClaimDraft(
+                claimId="claim-outbox",
+                statement="Transactional Outbox stores the database change and event together.",
+                evidenceRefs=["ev-1", "ev-2"],
+                confidence=0.9,
+            )
+        ],
+        evidence,
+        "[claim-outbox] [ev-1] [ev-2]",
+    )
+
+    assert [(item.claimId, item.evidenceRef) for item in citations] == [
+        ("claim-outbox", "ev-2")
+    ]

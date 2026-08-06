@@ -382,7 +382,25 @@ class DeepSeekModelProvider:
             "review exists, repair or soften its issues. Do not invent facts, URLs or identifiers.\n"
             + json.dumps(context, ensure_ascii=False),
         )
-        return WriterDraft.model_validate(data), usage
+        draft = WriterDraft.model_validate(data)
+        return self._ensure_markdown_citation_visibility(question, draft), usage
+
+    @staticmethod
+    def _ensure_markdown_citation_visibility(question: str, draft: WriterDraft) -> WriterDraft:
+        """Keep the model's prose, but deterministically close the Claim→Evidence contract."""
+        required_refs = [item for claim in draft.claims for item in [claim.claimId, *claim.evidenceRefs]]
+        if all(ref in draft.content for ref in required_refs):
+            return draft
+        chinese = any("\u4e00" <= char <= "\u9fff" for char in question)
+        heading = "## 引用映射" if chinese else "## Citation map"
+        lines = []
+        for claim in draft.claims:
+            refs = ", ".join(f"[{ref}]" for ref in claim.evidenceRefs)
+            if chinese:
+                lines.append(f"- [{claim.claimId}] {claim.statement}（证据：{refs}）")
+            else:
+                lines.append(f"- [{claim.claimId}] {claim.statement} (evidence: {refs})")
+        return draft.model_copy(update={"content": draft.content.rstrip() + "\n\n" + heading + "\n\n" + "\n".join(lines)})
 
     def critic(
         self,
@@ -432,16 +450,45 @@ class DeepSeekModelProvider:
             "response_format": {"type": "json_object"},
             "max_tokens": min(command.maxTokens, 12_000),
             "stream": False,
+            # JSON-mode Agent steps need a final machine-readable answer. DeepSeek V4
+            # enables thinking by default, which can occasionally consume the turn
+            # without producing message.content; keep these single-shot JSON calls
+            # in non-thinking mode while preserving the task's explicit token cap.
+            "thinking": {"type": "disabled"},
         }
         started = time.monotonic()
         body = self._post(command, payload)
-        latency_ms = max(0, int((time.monotonic() - started) * 1000))
         raw = self._response_text(body)
+        retry_count = 0
         try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"DeepSeek {node_name} response was not valid JSON") from exc
-        token_usage = body.get("usage") or {}
+            data = self._parse_json_object(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            # Models occasionally violate JSON mode on long Writer contexts. One
+            # bounded repair attempt is cheaper and more reliable than failing the
+            # entire asynchronous task; aggregate its usage into the same budget.
+            retry_payload = deepcopy(payload)
+            retry_payload["messages"].append(
+                {
+                    "role": "user",
+                    "content": "The previous answer was not valid JSON. Return only one valid JSON object that matches the required schema. No prose or Markdown.",
+                }
+            )
+            retry_body = self._post(command, retry_payload)
+            retry_raw = self._response_text(retry_body)
+            try:
+                data = self._parse_json_object(retry_raw)
+            except (json.JSONDecodeError, ValueError) as retry_exc:
+                raise ValueError(f"DeepSeek {node_name} response was not valid JSON") from retry_exc
+            retry_count = 1
+            first_usage = body.get("usage") or {}
+            second_usage = retry_body.get("usage") or {}
+            token_usage = {
+                "prompt_tokens": int(first_usage.get("prompt_tokens") or 0) + int(second_usage.get("prompt_tokens") or 0),
+                "completion_tokens": int(first_usage.get("completion_tokens") or 0) + int(second_usage.get("completion_tokens") or 0),
+            }
+        else:
+            token_usage = body.get("usage") or {}
+        latency_ms = max(0, int((time.monotonic() - started) * 1000))
         usage = ModelUsageResult(
             nodeName=node_name,
             provider="deepseek",
@@ -449,6 +496,7 @@ class DeepSeekModelProvider:
             inputTokens=int(token_usage.get("prompt_tokens") or 0),
             outputTokens=int(token_usage.get("completion_tokens") or 0),
             latencyMs=latency_ms,
+            retryCount=retry_count,
         )
         return data, usage
 
@@ -474,6 +522,23 @@ class DeepSeekModelProvider:
         if not isinstance(content, str) or not content.strip():
             raise ValueError("DeepSeek response did not contain message content")
         return content
+
+    @staticmethod
+    def _parse_json_object(raw: str) -> dict[str, Any]:
+        """Decode JSON mode output even when DeepSeek adds a presentation wrapper."""
+        candidate = raw.strip()
+        if candidate.startswith("```"):
+            newline = candidate.find("\n")
+            candidate = candidate[newline + 1 :] if newline >= 0 else ""
+            if candidate.rstrip().endswith("```"):
+                candidate = candidate.rstrip()[:-3]
+        start = candidate.find("{")
+        if start < 0:
+            raise ValueError("response did not contain a JSON object")
+        value, _ = json.JSONDecoder().raw_decode(candidate[start:])
+        if not isinstance(value, dict):
+            raise ValueError("response JSON value was not an object")
+        return value
 
 
 class BingRssSearchProvider:
