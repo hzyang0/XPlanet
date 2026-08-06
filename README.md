@@ -34,7 +34,7 @@
 - **服务协作与降级**：OpenFeign 用于需要立即结果的短调用；user 服务故障返回兜底作者名，MQ 故障由 Outbox 退避重试，缓存重建抢锁失败直接回源
 - **完整社区闭环**：文章分页与详情、两级评论、点赞/取消、热榜，以及研究报告审核发布和知识回流
 
-> 默认 `offline-demo` 用于零成本、可复现验收；另提供显式启用的 `openai-tools`，通过 Responses API 分别完成结构化规划/决策/写作和 Hosted Web Search。真实路径需要 API Key，目前只完成 MockTransport 契约测试，不能把离线评测结果描述为联网回答质量或事实正确率。
+> 每个研究任务都可在工作台选择 `offline-demo` 或 `openai-tools`。离线模式用于零成本、可复现验收；在线模式通过 Responses API 完成结构化规划/决策/写作和 Hosted Web Search。API Key 只存在 Agent 服务端，前端只读取“在线能力是否可用”。在线质量仍应使用自己的 Key 和代表性问题单独验收，不能用离线评测代替。
 
 > 已引入轻量 Spring Cloud Gateway 作为统一外部入口；注册中心、分布式事务和监控全家桶仍按业务规模暂不引入。
 > 高可用(集群/哨兵/多实例)作为演进方向写在 [`docs/HA-AND-DEGRADE.md`](docs/HA-AND-DEGRADE.md),按需扩展。
@@ -103,7 +103,7 @@ Docker Compose 用户可复制 `.env.example` 为 `.env` 后替换其中的示�
 
 脚本会启动 MySQL(3306)、Redis(6379)、RocketMQ(namesrv 9876 + broker 10911)，
 选择供宿主机 JVM 使用的 broker 广播地址，等待 MySQL 就绪并执行 Flyway。
-数据库结构只有一条 Flyway 演进路径：空库执行 V004 创建社区基础结构，现有 V4 库首次接入时自动建立 baseline；两者随后统一执行 V005～V009，增加 AI 控制面、幂等发布、持久化 checkpoint、Evidence 哈希和文章全文索引。后续只追加迁移，无需手工改库。
+数据库结构只有一条 Flyway 演进路径：空库执行 V004 创建社区基础结构，现有 V4 库首次接入时自动建立 baseline；两者随后统一执行 V005～V010，增加 AI 控制面、幂等发布、持久化 checkpoint、Evidence 哈希、文章全文索引和任务级 Provider。后续只追加迁移，无需手工改库。
 
 #### 2. 编译
 
@@ -123,13 +123,16 @@ $env:AI_CONTROL_URL="http://localhost:8084"
 .\.venv\Scripts\python.exe -m uvicorn xplanet_agent.api:app --host 0.0.0.0 --port 8000
 ```
 
-默认离线模式无需模型密钥。只有明确需要联网研究并接受外部 API 成本时才设置：
+默认离线模式无需模型密钥。只有明确需要联网研究并接受外部 API 成本时才设置 Key；`AGENT_PROVIDER` 仅用于健康信息中的默认提示，实际执行模式由每个任务的 `provider` 决定：
 
 ```powershell
-$env:AGENT_PROVIDER="openai-tools"
 $env:OPENAI_API_KEY="replace-with-your-key"
 $env:OPENAI_MODEL="gpt-5.6-terra"
 ```
+
+全 Docker 模式可直接编辑被 Git 忽略的 `.env`，填写 `OPENAI_API_KEY` 后重新运行 `scripts/start-docker.ps1`。工作台会自动刷新 Agent 能力：Key 未配置时在线选项禁用，配置后在线选项启用。不要把 `.env` 提交到仓库。
+
+Gateway 容器默认暴露宿主机 8080；若 8080 已占用，启动脚本自动尝试 18080。浏览器工作台会探测两个端口并保存实际可用地址，因此不同浏览器不再依赖各自旧的 localStorage 配置。
 
 IDEA 直接 Run:`ArticleApplication`(8081)、`InteractionApplication`(8082)、`UserApplication`(8083)、`AiApplication`(8084)、`GatewayApplication`(8080)。先启动下游服务，最后启动 Gateway。
 
@@ -222,7 +225,7 @@ xplanet/
 │   ├── Dockerfile.app
 │   ├── broker-host.conf           # 宿主机 JVM 使用的 broker 广播地址
 │   └── broker-docker.conf         # 容器应用使用的 broker 广播地址
-├── sql/migrations/          # V004 完整基线 + V005～V009 增量迁移
+├── sql/migrations/          # V004 完整基线 + V005～V010 增量迁移
 ├── scripts/                 # 构建、迁移、启动、端到端与故障恢复测试
 ├── .github/workflows/ci.yml # 单测、Compose 与脚本语法检查
 └── docs/

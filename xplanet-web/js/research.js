@@ -11,7 +11,8 @@
     lastEventId: "",
     streamController: null,
     reconnectTimer: null,
-    statusPollTimer: null
+    statusPollTimer: null,
+    providerCapabilities: null
   };
 
   function integer(value, fallback) {
@@ -49,6 +50,7 @@
     if (!root.auth.isLoggedIn()) return;
     const preserve = !(options && options.clearSelection);
     try {
+      await refreshProviderCapabilities();
       state.tasks = await root.api.request("/api/ai/tasks?limit=50") || [];
       if (preserve && state.selectedTask) {
         const latest = state.tasks.find(function (task) { return task.id === state.selectedTask.id; });
@@ -59,6 +61,28 @@
     } catch (error) {
       document.getElementById("taskList").innerHTML = '<div class="inline-error">任务加载失败：' + root.util.escapeHtml(error.message) + '</div>';
       if (error.status === 401 || error.code === 2001) root.app.handleExpiredSession();
+    }
+  }
+
+  async function refreshProviderCapabilities() {
+    const select = document.getElementById("researchProvider");
+    const hint = document.getElementById("providerHint");
+    try {
+      state.providerCapabilities = await root.api.request("/api/ai/providers");
+      const providers = state.providerCapabilities.providers || {};
+      const online = Boolean(providers["openai-tools"]);
+      const onlineOption = select.querySelector('option[value="openai-tools"]');
+      onlineOption.disabled = !online;
+      if (!online && select.value === "openai-tools") select.value = "offline-demo";
+      hint.textContent = online
+        ? "在线模式已就绪：由 Agent 在服务端读取 API Key，浏览器不会接触密钥。"
+        : "离线模式可用；要启用在线模式，请配置 OPENAI_API_KEY 后重启 Agent。";
+      hint.classList.toggle("is-online", online);
+    } catch (_) {
+      state.providerCapabilities = null;
+      select.value = "offline-demo";
+      select.querySelector('option[value="openai-tools"]').disabled = true;
+      hint.textContent = "暂时无法读取 Agent 能力，已安全回退到离线模式。";
     }
   }
 
@@ -73,7 +97,8 @@
       return '<button class="task-card' + (selected ? ' is-active' : '') + '" data-task-id="' + task.id + '" type="button">' +
         '<div class="task-card-top"><strong>#' + task.id + '</strong><span class="status-badge" data-tone="' + statusTone(task.status) + '">' +
         root.util.escapeHtml(task.status) + '</span></div>' +
-        '<p>' + root.util.escapeHtml(task.question) + '</p><time>' + root.util.escapeHtml(root.util.formatTime(task.updateTime || task.createTime)) + '</time></button>';
+        '<p>' + root.util.escapeHtml(task.question) + '</p><div class="task-card-foot"><span class="provider-badge">' +
+        root.util.escapeHtml(task.provider || "offline-demo") + '</span><time>' + root.util.escapeHtml(root.util.formatTime(task.updateTime || task.createTime)) + '</time></div></button>';
     }).join("");
   }
 
@@ -97,6 +122,7 @@
         headers: { "Idempotency-Key": global.crypto && global.crypto.randomUUID ? global.crypto.randomUUID() : String(Date.now()) },
         body: {
           question: question,
+          provider: document.getElementById("researchProvider").value,
           maxSources: integer(document.getElementById("maxSources").value, 5),
           maxToolCalls: integer(document.getElementById("maxToolCalls").value, 10),
           maxTokens: integer(document.getElementById("maxTokens").value, 8000),
@@ -148,6 +174,7 @@
     setBadge(document.getElementById("taskStatus"), task.status);
     document.getElementById("taskRunId").textContent = task.currentRunId || "";
     document.getElementById("taskQuestion").textContent = task.question || "";
+    document.getElementById("taskProvider").textContent = "模式 " + (task.provider || "offline-demo");
     document.getElementById("taskSourceBudget").textContent = "来源 ≤ " + task.maxSources;
     document.getElementById("taskToolBudget").textContent = "工具 ≤ " + task.maxToolCalls;
     document.getElementById("taskTokenBudget").textContent = "Token ≤ " + task.maxTokens;
@@ -318,8 +345,13 @@
       return '<div class="source-card"><small>SOURCE ' + (index + 1) + ' · #' + source.id + '</small>' +
         (url ? '<a href="' + root.util.escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + root.util.escapeHtml(source.title || url) + '</a>' :
           '<b>' + root.util.escapeHtml(source.title || "未知来源") + '</b>') +
-        '<small>' + root.util.escapeHtml(source.contentHash || "") + '</small></div>';
+        '<small title="' + root.util.escapeHtml(source.contentHash || "") + '">' + root.util.escapeHtml(shortHash(source.contentHash)) + '</small></div>';
     }).join("") : '<div class="empty-copy">没有来源</div>';
+  }
+
+  function shortHash(value) {
+    const text = String(value || "");
+    return text.length > 16 ? text.slice(0, 12) + "…" : text;
   }
 
   function renderEvidence(evidence, citations) {
@@ -409,6 +441,14 @@
     });
     document.getElementById("reportContent").addEventListener("input", function (event) {
       document.getElementById("reportPreview").innerHTML = root.util.renderMarkdown(event.target.value);
+    });
+    document.getElementById("researchProvider").addEventListener("change", function (event) {
+      const hint = document.getElementById("providerHint");
+      if (event.target.value === "openai-tools") {
+        hint.textContent = "在线模式会调用模型与工具并产生真实 API 费用；API Key 仅保存在 Agent 服务端。";
+      } else {
+        hint.textContent = "离线模式不消耗模型额度，使用固定语料验证完整工作流。";
+      }
     });
   }
 

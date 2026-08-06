@@ -35,13 +35,13 @@ XPlanet 是一个“开发者社区 + AI 研究 Agent”项目：用户可以阅
 
 ## 2. 你真正访问的入口
 
-外部客户端只访问：
+外部客户端只访问 Gateway。默认是：
 
 ```text
 http://localhost:8080
 ```
 
-8080 是 `xplanet-gateway`。Docker 模式下，8081～8084 和 Agent 8000 都不暴露给宿主机。
+8080 是 `xplanet-gateway` 的默认宿主机端口；如果它被占用，`start-docker.ps1` 会自动尝试 18080，工作台也会自动探测 8080/18080。Docker 模式下，8081～8084 和 Agent 8000 都不暴露给宿主机。
 
 ```mermaid
 flowchart LR
@@ -298,6 +298,7 @@ $aiHeaders = @{
 }
 $aiBody = @{
   question="解释 XPlanet 的 Outbox 设计"
+  provider="offline-demo"
   maxSources=3
   maxToolCalls=5
   maxTokens=4000
@@ -310,6 +311,8 @@ $taskId = $task.data.id
 ```
 
 为什么必须有 `Idempotency-Key`：如果浏览器超时后重试，不能创建两个一样的付费任务。相同用户、相同 key、相同请求返回原任务；相同 key 用于不同请求会被拒绝。
+
+`provider` 为什么也写进任务：它是这次研究的执行契约。`offline-demo` 使用固定语料和确定性 Writer，适合验证流程；`openai-tools` 使用服务端 Key 调 Responses API 和 Hosted Web Search。它会参与幂等请求对比，并随 MQ 命令持久化，因此任务重试时不会悄悄切换模式。
 
 查询任务：
 

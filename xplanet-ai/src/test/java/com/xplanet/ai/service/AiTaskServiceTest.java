@@ -63,6 +63,7 @@ class AiTaskServiceTest {
         AiTaskCommand command = JsonUtil.fromJson(payload.getValue(), AiTaskCommand.class);
         assertThat(command.getTaskId()).isEqualTo(101L);
         assertThat(command.getUserId()).isEqualTo(7L);
+        assertThat(command.getProvider()).isEqualTo("offline-demo");
         assertThat(command.getMaxToolCalls()).isEqualTo(10);
     }
 
@@ -84,6 +85,19 @@ class AiTaskServiceTest {
         when(taskMapper.findByIdempotencyKey(7L, "same-key")).thenReturn(existing);
 
         assertThatThrownBy(() -> service.create(7L, "same-key", request("different question")))
+                .isInstanceOf(BizException.class)
+                .extracting("code")
+                .isEqualTo(ErrorCode.AI_IDEMPOTENCY_CONFLICT.getCode());
+    }
+
+    @Test
+    void shouldTreatProviderAsPartOfTheIdempotentRequest() {
+        AiTaskRecord existing = task(9L, "QUEUED", 0);
+        when(taskMapper.findByIdempotencyKey(7L, "same-key")).thenReturn(existing);
+        CreateResearchTaskRequest online = request(existing.getQuestion());
+        online.setProvider("openai-tools");
+
+        assertThatThrownBy(() -> service.create(7L, "same-key", online))
                 .isInstanceOf(BizException.class)
                 .extracting("code")
                 .isEqualTo(ErrorCode.AI_IDEMPOTENCY_CONFLICT.getCode());
@@ -180,6 +194,7 @@ class AiTaskServiceTest {
         task.setUserId(7L);
         task.setIdempotencyKey("same-key");
         task.setQuestion("How does Outbox work?");
+        task.setProvider("offline-demo");
         task.setStatus(status);
         task.setCurrentRunId("run-1");
         task.setVersion(version);

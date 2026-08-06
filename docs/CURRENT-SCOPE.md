@@ -32,7 +32,7 @@ flowchart LR
     AI -->|"审核后 OpenFeign"| ARTICLE
 ```
 
-应用服务中只有 Gateway 8080 暴露到宿主机；MySQL、Redis 和 RocketMQ 端口仍为本地混合开发保留。其余业务服务和 Agent 在 Docker 网络内通信；下游服务仍独立校验 JWT 或内部 Token，不把 Gateway 当作唯一安全边界。
+应用服务中只有 Gateway 暴露到宿主机（默认 8080，被占用时启动脚本可使用 18080）；MySQL、Redis 和 RocketMQ 端口仍为本地混合开发保留。其余业务服务和 Agent 在 Docker 网络内通信；下游服务仍独立校验 JWT 或内部 Token，不把 Gateway 当作唯一安全边界。
 
 ## 3. Agent 主流程
 

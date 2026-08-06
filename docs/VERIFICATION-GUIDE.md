@@ -9,12 +9,12 @@ $env:TOKEN_SECRET="<至少32字节且与环境一致的密钥>"
 python -m http.server 4173 --directory xplanet-web
 ```
 
-打开 `http://127.0.0.1:4173`，使用 `alice / password`。只展示 Gateway 8080，不直接访问内部服务。
+打开 `http://127.0.0.1:4173`，使用 `alice / password`。页面会自动探测 Gateway 8080/18080，不直接访问内部服务。
 
 ## 巡检步骤
 
 1. **0:00～0:40 定位**：一句话说明“可追溯研究 Agent + 知识社区”，Java 负责可靠任务和业务副作用，Python/LangGraph 负责动态决策与证据质量。
-2. **0:40～1:30 创建研究**：输入“Transactional Outbox 如何保证 Agent 长任务可靠？”；展开预算，说明工具次数、来源数、Token 和截止时间都是硬上限。
+2. **0:40～1:30 创建研究**：输入“Transactional Outbox 如何保证 Agent 长任务可靠？”；先选择离线或在线模式，再展开预算，说明工具次数、来源数、Token 和截止时间都是硬上限。在线选项只有 Agent 服务端配置 Key 后才启用。
 3. **1:30～2:20 看时间线**：指出 Planner、`DECIDE_ACTION`、`internal_search/web_search/web_fetch`、Evidence Builder、Writer 和 Critic；强调不是固定三步，下一工具由结构化 Action 决定。
 4. **2:20～3:10 看报告**：展开来源与 Evidence，展示 `sourceRef/evidenceRef`、片段哈希、Claim 引用和 Critic 结果；说明“引用存在不等于事实正确”，当前离线评测只验证结构和词面支持。
 5. **3:10～4:00 人工发布**：点击审核发布，再次点击仍返回同一 Article ID；说明 Human-in-the-loop 控制唯一写副作用，`ai_published_article` 保证幂等。

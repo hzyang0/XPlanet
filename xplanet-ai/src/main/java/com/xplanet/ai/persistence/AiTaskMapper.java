@@ -13,9 +13,9 @@ import java.util.List;
 public interface AiTaskMapper {
 
     @Insert("INSERT IGNORE INTO ai_task " +
-            "(user_id, idempotency_key, question, status, current_run_id, version, " +
+            "(user_id, idempotency_key, question, provider, status, current_run_id, version, " +
             "max_sources, max_tool_calls, max_tokens, deadline_seconds, create_time, update_time) " +
-            "VALUES (#{userId}, #{idempotencyKey}, #{question}, #{status}, #{currentRunId}, 0, " +
+            "VALUES (#{userId}, #{idempotencyKey}, #{question}, #{provider}, #{status}, #{currentRunId}, 0, " +
             "#{maxSources}, #{maxToolCalls}, #{maxTokens}, #{deadlineSeconds}, NOW(), NOW())")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insertTask(AiTaskRecord task);

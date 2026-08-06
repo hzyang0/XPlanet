@@ -153,6 +153,7 @@ public class AiResultPersistenceService {
                 || result.getEvidence() == null || result.getCitations() == null
                 || result.getUsage() == null || result.getProvider() == null
                 || result.getProvider().isBlank() || result.getProvider().length() > 64
+                || !result.getProvider().equals(task.getProvider())
                 || result.getSources().isEmpty() || result.getSources().size() > task.getMaxSources()
                 || result.getEvidence().size() > task.getMaxToolCalls() * 5
                 // A dynamic Agent can make one planner call, up to one decision and one

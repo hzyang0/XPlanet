@@ -132,10 +132,18 @@
   }
 
   async function bootstrap() {
-    document.getElementById("apiBase").value = root.api.state.baseUrl;
     bind();
+    const connection = await root.api.discoverBaseUrl();
+    document.getElementById("apiBase").value = connection.baseUrl;
+    const hint = document.getElementById("connectionHint");
+    hint.textContent = connection.connected ? "已连接 " + connection.baseUrl : "未找到 Gateway，请检查地址或启动服务";
+    hint.classList.toggle("is-error", !connection.connected);
     renderSession();
     activate(global.location.hash.slice(1));
+    if (!connection.connected) {
+      document.getElementById("articleList").innerHTML = '<div class="inline-error">Gateway 未连接。服务启动后刷新页面，或手动填写正确地址。</div>';
+      return;
+    }
     await root.community.load();
     if (root.auth.isLoggedIn()) await root.research.refreshTasks();
   }

@@ -11,6 +11,7 @@ public class AiTaskRecord {
     private Long userId;
     private String idempotencyKey;
     private String question;
+    private String provider;
     private String status;
     private String currentRunId;
     private Integer version;
@@ -27,6 +28,7 @@ public class AiTaskRecord {
         view.setId(id);
         view.setUserId(userId);
         view.setQuestion(question);
+        view.setProvider(provider);
         view.setStatus(status);
         view.setCurrentRunId(currentRunId);
         view.setVersion(version);

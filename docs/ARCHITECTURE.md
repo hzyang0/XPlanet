@@ -194,7 +194,8 @@ POST /api/ai/tasks
 - 报告发布先持久化 `APPROVED`，文章服务暂时失败时可由用户重试；
 - `ai_published_article.report_id` 唯一，重复审核或网络重试返回同一 `article_id`；
 - 默认 Agent 是离线确定性提供器，只证明工作流结构与可靠性，不证明实时搜索或模型答案质量；
-- 可选 `openai-tools` 把 Responses API 的结构化 Planner/Decision/Writer/Critic 与 Hosted Web Search 拆开；当前通过 MockTransport 验证契约，未用真实密钥做联网质量验收；
+- `ai_task.provider` 把执行模式固定到单个任务：`offline-demo` 与 `openai-tools` 可以在同一套服务中并存，MQ 重投仍使用任务原 Provider，不受进程默认值变化影响；
+- 可选 `openai-tools` 把 Responses API 的结构化 Planner/Decision/Writer/Critic 与 Hosted Web Search 拆开；Agent 只在服务端读取 Key，`/api/ai/providers` 仅暴露能力状态和模型名；当前通过 MockTransport 验证契约，真实联网质量需使用自有 Key 单独验收；
 - `web_fetch` 只允许搜索候选 URL，并逐跳限制 HTTP(S)、80/443、公网 DNS、重定向、内容类型、大小和超时；生产环境仍应增加 egress proxy，应用层检查不能完全消除 DNS rebinding 竞态。
 
 ### 5.3 评测与可观测性
@@ -220,7 +221,7 @@ POST /api/ai/tasks
 ## 7. 部署与迁移
 
 - 本地混合模式通过 `scripts/setup-infra.ps1` 启动中间件，RocketMQ broker 广播宿主机地址，Java 服务在 IDE 或本机 JVM 中运行；
-- 全 Docker 模式通过 `scripts/start-docker.ps1` 切换 broker 容器地址、执行 Flyway、构建五个 Java 应用和一个 Python Agent 镜像并等待健康；应用服务中只有 Gateway 8080 暴露到宿主机，中间件端口仍为本地混合开发保留；
-- 数据库只有 Flyway 一条结构来源：空库执行 V004 完整 baseline，已有 V4 结构但没有迁移历史的数据库会自动记为 baseline；两者随后统一执行 V005～V009。以后只追加版本脚本，不回写旧迁移；
+- 全 Docker 模式通过 `scripts/start-docker.ps1` 切换 broker 容器地址、执行 Flyway、构建五个 Java 应用和一个 Python Agent 镜像并等待健康；应用服务中只有 Gateway 暴露到宿主机，默认端口 8080，被占用时自动尝试 18080；
+- 数据库只有 Flyway 一条结构来源：空库执行 V004 完整 baseline，已有 V4 结构但没有迁移历史的数据库会自动记为 baseline；两者随后统一执行 V005～V010。以后只追加版本脚本，不回写旧迁移；
 - 两种模式共用固定 `xplanet-net` 网络，但分别使用 `broker-host.conf` 和 `broker-docker.conf`，避免 broker 把客户端无法访问的地址注册到 NameServer；
 - 当前执行 Java/Python 单元测试、固定离线评测和 5 条站内召回评测；真实 MySQL/Redis/RocketMQ/Gateway/Agent 行为由 `scripts/smoke-test.ps1`、`scripts/test-agent-recovery.ps1` 与 `scripts/test-internal-recall.ps1` 验证。

@@ -4,7 +4,7 @@
   const root = global.XP = global.XP || {};
   const storage = global.localStorage;
   const state = {
-    baseUrl: storage.getItem("xplanet.apiBase") || "http://localhost:8080",
+    baseUrl: normalizeBase(storage.getItem("xplanet.apiBase") || ""),
     token: storage.getItem("xplanet.token") || ""
   };
 
@@ -30,6 +30,50 @@
     storage.setItem("xplanet.apiBase", normalized);
   }
 
+  async function probeGateway(baseUrl) {
+    const controller = new AbortController();
+    const timer = global.setTimeout(function () { controller.abort(); }, 1600);
+    try {
+      const response = await fetch(normalizeBase(baseUrl) + "/api/article/list?pageNum=1&pageSize=1", {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: controller.signal
+      });
+      if (!response.ok) return false;
+      const payload = await response.json();
+      return payload && payload.code === 0 && payload.data && Array.isArray(payload.data.records);
+    } catch (_) {
+      return false;
+    } finally {
+      global.clearTimeout(timer);
+    }
+  }
+
+  async function discoverBaseUrl() {
+    const protocol = global.location.protocol === "https:" ? "https:" : "http:";
+    const hostname = global.location.hostname || "localhost";
+    const candidates = [
+      state.baseUrl,
+      global.XP_GATEWAY_BASE_URL,
+      protocol + "//" + hostname + ":8080",
+      protocol + "//" + hostname + ":18080",
+      "http://localhost:8080",
+      "http://localhost:18080",
+      "http://127.0.0.1:8080",
+      "http://127.0.0.1:18080"
+    ].map(normalizeBase).filter(function (value, index, values) {
+      return value && values.indexOf(value) === index;
+    });
+    const results = await Promise.all(candidates.map(probeGateway));
+    const selected = candidates[results.indexOf(true)];
+    if (selected) {
+      setBaseUrl(selected);
+      return { connected: true, baseUrl: selected };
+    }
+    state.baseUrl = candidates[0] || protocol + "//" + hostname + ":8080";
+    return { connected: false, baseUrl: state.baseUrl };
+  }
+
   function setToken(value) {
     state.token = String(value || "");
     if (state.token) storage.setItem("xplanet.token", state.token);
@@ -49,7 +93,13 @@
       config.headers["Content-Type"] = "application/json";
       config.body = JSON.stringify(config.body);
     }
-    const response = await fetch(state.baseUrl + path, config);
+    if (!state.baseUrl) throw new ApiError("尚未找到可用的 Gateway", "GATEWAY_UNAVAILABLE", 0);
+    let response;
+    try {
+      response = await fetch(state.baseUrl + path, config);
+    } catch (_) {
+      throw new ApiError("无法连接 Gateway " + state.baseUrl + "，请确认服务已启动或修改地址", "GATEWAY_UNAVAILABLE", 0);
+    }
     const contentType = response.headers.get("content-type") || "";
     let payload = null;
     if (contentType.includes("application/json")) {
@@ -89,12 +139,18 @@
     const config = options || {};
     const headers = authHeaders({ Accept: "text/event-stream" });
     if (config.lastEventId) headers["Last-Event-ID"] = config.lastEventId;
-    const response = await fetch(state.baseUrl + path, {
-      method: "GET",
-      headers: headers,
-      cache: "no-store",
-      signal: config.signal
-    });
+    let response;
+    try {
+      response = await fetch(state.baseUrl + path, {
+        method: "GET",
+        headers: headers,
+        cache: "no-store",
+        signal: config.signal
+      });
+    } catch (error) {
+      if (error.name === "AbortError") throw error;
+      throw new ApiError("无法连接 Gateway " + state.baseUrl, "GATEWAY_UNAVAILABLE", 0);
+    }
     if (!response.ok) {
       let message = "SSE 连接失败：HTTP " + response.status;
       try {
@@ -128,6 +184,7 @@
     ApiError: ApiError,
     state: state,
     setBaseUrl: setBaseUrl,
+    discoverBaseUrl: discoverBaseUrl,
     setToken: setToken,
     authHeaders: authHeaders,
     request: request,

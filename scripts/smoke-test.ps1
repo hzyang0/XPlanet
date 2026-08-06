@@ -21,7 +21,8 @@ param(
     [string]$Password = "password",
     [string]$MysqlContainer = "xp-mysql",
     [string]$GatewayBaseUrl = "http://localhost:8080",
-    [int]$TimeoutSeconds = 90
+    [int]$TimeoutSeconds = 90,
+    [switch]$KeepSmokeArtifacts
 )
 
 $ErrorActionPreference = "Stop"
@@ -424,6 +425,15 @@ if ($unauthenticated.code -ne 2001) {
     throw "未登录点赞应返回业务码 2001，实际为 $($unauthenticated.code)"
 }
 
+$publishedArticleCleaned = $false
+if (-not $KeepSmokeArtifacts) {
+    $cleanup = Invoke-RestMethod -Method Delete `
+        -Uri "$GatewayBaseUrl/api/article/$($approved.data.publishArticleId)" `
+        -Headers $headers -TimeoutSec 10
+    Assert-BusinessSuccess $cleanup "清理冒烟测试发布文章"
+    $publishedArticleCleaned = $true
+}
+
 [pscustomobject]@{
     Health = ($health -join ", ")
     GatewayCorsVerified = $true
@@ -449,6 +459,7 @@ if ($unauthenticated.code -ne 2001) {
     AiMetricsExposed = $true
     AiEvidenceCount = $aiReport.data.evidence.Count
     AiPublishedArticleId = $approved.data.publishArticleId
+    AiPublishedArticleCleaned = $publishedArticleCleaned
     AiPublishIdempotent = ($approved.data.publishArticleId -eq $approvedAgain.data.publishArticleId)
     AiInternalRecallTaskId = $recallCreated.data.id
     AiPublishedArticleRecalled = $publishedArticleRecalled

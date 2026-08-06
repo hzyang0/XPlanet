@@ -9,6 +9,7 @@ public class AiTaskVO {
     private Long id;
     private Long userId;
     private String question;
+    private String provider;
     private String status;
     private String currentRunId;
     private Integer version;

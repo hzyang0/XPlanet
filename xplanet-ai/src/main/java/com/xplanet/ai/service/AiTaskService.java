@@ -50,6 +50,7 @@ public class AiTaskService {
         task.setUserId(userId);
         task.setIdempotencyKey(key);
         task.setQuestion(normalized.question);
+        task.setProvider(normalized.provider);
         task.setStatus(AiTaskStatus.QUEUED.name());
         task.setCurrentRunId(runId);
         task.setMaxSources(normalized.maxSources);
@@ -137,6 +138,7 @@ public class AiTaskService {
                 .occurredAt(System.currentTimeMillis())
                 .userId(task.getUserId())
                 .question(task.getQuestion())
+                .provider(task.getProvider())
                 .maxSources(task.getMaxSources())
                 .maxToolCalls(task.getMaxToolCalls())
                 .maxTokens(task.getMaxTokens())
@@ -170,7 +172,12 @@ public class AiTaskService {
         if (question.length() > 2000) {
             throw new BizException(ErrorCode.PARAM_INVALID);
         }
-        NormalizedRequest normalized = new NormalizedRequest(question,
+        String provider = request.getProvider() == null || request.getProvider().isBlank()
+                ? "offline-demo" : request.getProvider().trim().toLowerCase();
+        if (!("offline-demo".equals(provider) || "openai-tools".equals(provider))) {
+            throw new BizException(ErrorCode.PARAM_INVALID);
+        }
+        NormalizedRequest normalized = new NormalizedRequest(question, provider,
                 request.getMaxSources() == null ? 5 : request.getMaxSources(),
                 request.getMaxToolCalls() == null ? 10 : request.getMaxToolCalls(),
                 request.getMaxTokens() == null ? 8000 : request.getMaxTokens(),
@@ -186,6 +193,7 @@ public class AiTaskService {
 
     private void assertSameRequest(AiTaskRecord task, NormalizedRequest request) {
         if (!Objects.equals(task.getQuestion(), request.question)
+                || !Objects.equals(task.getProvider(), request.provider)
                 || !Objects.equals(task.getMaxSources(), request.maxSources)
                 || !Objects.equals(task.getMaxToolCalls(), request.maxToolCalls)
                 || !Objects.equals(task.getMaxTokens(), request.maxTokens)
@@ -196,14 +204,16 @@ public class AiTaskService {
 
     private static class NormalizedRequest {
         private final String question;
+        private final String provider;
         private final Integer maxSources;
         private final Integer maxToolCalls;
         private final Integer maxTokens;
         private final Integer deadlineSeconds;
 
-        private NormalizedRequest(String question, Integer maxSources, Integer maxToolCalls,
+        private NormalizedRequest(String question, String provider, Integer maxSources, Integer maxToolCalls,
                                   Integer maxTokens, Integer deadlineSeconds) {
             this.question = question;
+            this.provider = provider;
             this.maxSources = maxSources;
             this.maxToolCalls = maxToolCalls;
             this.maxTokens = maxTokens;

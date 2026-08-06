@@ -141,7 +141,7 @@ services:
       - interaction
       - ai
     ports:
-      - "8080:8080"
+      - "${GATEWAY_HOST_PORT:-8080}:8080"
     networks:
       - xp-net
 

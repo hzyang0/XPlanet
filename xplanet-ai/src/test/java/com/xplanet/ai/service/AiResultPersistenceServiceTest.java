@@ -174,6 +174,20 @@ class AiResultPersistenceServiceTest {
     }
 
     @Test
+    void shouldRejectResultFromAProviderDifferentFromTheRequestedOne() {
+        AiResearchResult invalid = result();
+        invalid.setProvider("openai-tools");
+        when(resultMapper.insertInbox(AiResultPersistenceService.CONSUMER, "event-1")).thenReturn(1);
+        when(taskMapper.findInternalForUpdate(1L)).thenReturn(task("RUNNING"));
+
+        assertThatThrownBy(() -> service.complete("event-1", invalid))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("AI result exceeds task bounds");
+
+        verify(resultMapper, never()).insertSource(any());
+    }
+
+    @Test
     void shouldRejectModelCallRecordsBeyondDynamicAgentBound() {
         AiResearchResult invalid = result();
         invalid.setUsage(new ArrayList<>(Collections.nCopies(9, invalid.getUsage().get(0))));
@@ -194,6 +208,7 @@ class AiResultPersistenceServiceTest {
         task.setId(1L);
         task.setCurrentRunId("run-1");
         task.setStatus(status);
+        task.setProvider("offline-demo");
         task.setMaxSources(5);
         task.setMaxToolCalls(10);
         task.setMaxTokens(8_000);

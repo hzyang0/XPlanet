@@ -21,6 +21,20 @@ $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $Root
 
+# Docker Compose reads .env automatically, but PowerShell validation below also needs
+# the same values. Existing process variables always win over the local file.
+$dotEnvPath = Join-Path $Root ".env"
+if (Test-Path $dotEnvPath) {
+    foreach ($line in Get-Content -Encoding UTF8 $dotEnvPath) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#") -or -not $trimmed.Contains("=")) { continue }
+        $parts = $trimmed.Split("=", 2)
+        if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($parts[0], "Process"))) {
+            [Environment]::SetEnvironmentVariable($parts[0], $parts[1], "Process")
+        }
+    }
+}
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Error "未找到 docker。"
 }
@@ -34,11 +48,21 @@ if ($env:AGENT_INTERNAL_TOKEN.Length -lt 32) {
     Write-Error 'AGENT_INTERNAL_TOKEN 至少需要32字符。'
 }
 
+$gatewayPortExplicit = -not [string]::IsNullOrWhiteSpace($env:GATEWAY_HOST_PORT)
+$gatewayHostPort = if ($gatewayPortExplicit) { [int]$env:GATEWAY_HOST_PORT } else { 8080 }
 $occupied = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-    Where-Object { $_.LocalPort -eq 8080 }
+    Where-Object { $_.LocalPort -eq $gatewayHostPort }
+if ($occupied -and -not $gatewayPortExplicit -and $gatewayHostPort -eq 8080) {
+    $gatewayHostPort = 18080
+    $occupied = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $_.LocalPort -eq $gatewayHostPort }
+}
 if ($occupied) {
-    $ports = ($occupied.LocalPort | Sort-Object -Unique) -join ","
-    throw "应用端口已被本机进程占用：$ports。请先停止本地 JVM。"
+    throw "Gateway 宿主机端口 $gatewayHostPort 已被占用，请设置其他 GATEWAY_HOST_PORT。"
+}
+$env:GATEWAY_HOST_PORT = [string]$gatewayHostPort
+if ([string]::IsNullOrWhiteSpace($env:PUBLIC_GATEWAY_URL)) {
+    $env:PUBLIC_GATEWAY_URL = "http://localhost:$gatewayHostPort"
 }
 
 $env:ROCKETMQ_BROKER_CONFIG = "broker-docker.conf"
@@ -68,7 +92,7 @@ do {
     Start-Sleep -Seconds 2
     $down = @()
     try {
-        if ((Invoke-RestMethod "http://localhost:8080/actuator/health" -TimeoutSec 3).status -ne "UP") {
+        if ((Invoke-RestMethod "http://localhost:$gatewayHostPort/actuator/health" -TimeoutSec 3).status -ne "UP") {
             $down += "gateway"
         }
     } catch {
@@ -102,4 +126,4 @@ if ($agentHealth -ne "healthy") {
 docker compose -f docker/docker-compose-infra.yml ps
 docker compose -f docker/docker-compose-app.yml ps
 Write-Host ">>> XPlanet 全 Docker 环境已就绪" -ForegroundColor Green
-Write-Host ">>> 统一入口：http://localhost:8080" -ForegroundColor Green
+Write-Host ">>> 统一入口：http://localhost:$gatewayHostPort" -ForegroundColor Green

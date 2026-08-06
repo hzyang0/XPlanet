@@ -25,6 +25,7 @@ public class AiTaskCommand implements Serializable {
     private String traceId;
     private Long userId;
     private String question;
+    private String provider;
     private Integer maxSources;
     private Integer maxToolCalls;
     private Integer maxTokens;
