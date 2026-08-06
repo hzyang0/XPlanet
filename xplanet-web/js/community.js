@@ -69,7 +69,7 @@
       document.getElementById("articleMeta").innerHTML =
         '<span>作者 ' + root.util.escapeHtml(article.authorName || ("用户 " + integer(article.authorId))) + '</span>' +
         '<span>♡ ' + integer(article.likeCount) + '</span><span>◉ ' + integer(article.viewCount) + '</span>';
-      document.getElementById("articleContent").textContent = article.content || "";
+      document.getElementById("articleContent").innerHTML = root.util.renderMarkdown(article.content || "");
       document.getElementById("likeArticleButton").textContent = "♡ 点赞";
       document.getElementById("articleListView").hidden = true;
       document.getElementById("articleDetailView").hidden = false;

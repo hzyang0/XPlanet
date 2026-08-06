@@ -317,6 +317,7 @@
   }
 
   function renderReport(report) {
+    document.getElementById("researchWorkspace").classList.toggle("has-report", Boolean(report));
     document.getElementById("reportEmpty").hidden = Boolean(report);
     document.getElementById("reportDetail").hidden = !report;
     if (!report) return;
