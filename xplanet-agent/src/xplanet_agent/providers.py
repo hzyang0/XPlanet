@@ -152,7 +152,7 @@ class OfflineModelProvider:
             return ToolAction(
                 name="internal_search",
                 query=question,
-                reason="优先复用已经发布的站内技术知识",
+                reason="检索内置离线语料，建立可复现的证据基线",
             ), None
         fetched_urls = {item.url for item in documents}
         for hit in search_hits[: command.maxSources]:

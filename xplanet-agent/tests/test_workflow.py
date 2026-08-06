@@ -96,7 +96,7 @@ def test_workflow_uses_bounded_offline_corpus_within_the_shared_tool_budget() ->
     result = ResearchWorkflow().run(command(maxSources=2, maxToolCalls=1), sink)
 
     assert all(source.url.startswith("https://") for source in result.sources)
-    assert all(item.locator == "offline corpus" for item in result.evidence)
+    assert all(item.locator == "离线内置语料" for item in result.evidence)
     assert sink.saved_nodes.count("EXECUTE_TOOL") == 1
 
 

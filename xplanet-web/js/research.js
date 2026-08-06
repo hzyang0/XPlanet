@@ -367,13 +367,19 @@
     box.innerHTML = sources.length ? sources.map(function (source, index) {
       const url = root.util.safeHttpUrl(source.url);
       const internalArticle = url && url.match(/\/api\/article\/(\d+)(?:[?#].*)?$/);
+      const rawTitle = source.title || url || "未知来源";
+      const legacyOffline = !internalArticle && rawTitle.startsWith("站内知识：");
+      const offline = rawTitle.startsWith("离线语料：") || legacyOffline;
+      const displayTitle = rawTitle.replace(/^(?:站内知识|离线语料)：\s*/, "");
+      const sourceKind = internalArticle ? "站内文章" : offline ? "离线语料 · 原始页" : "外部来源";
       const link = internalArticle
         ? '<button class="source-link" data-source-article-id="' + internalArticle[1] + '" type="button">' +
-          root.util.escapeHtml(source.title || "站内文章") + '</button>'
+          root.util.escapeHtml(displayTitle || "站内文章") + '</button>'
         : url
-          ? '<a href="' + root.util.escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + root.util.escapeHtml(source.title || url) + '</a>'
-          : '<b>' + root.util.escapeHtml(source.title || "未知来源") + '</b>';
-      return '<div class="source-card"><small>SOURCE ' + (index + 1) + ' · #' + source.id + '</small>' +
+          ? '<a href="' + root.util.escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + root.util.escapeHtml(displayTitle || url) + '</a>'
+          : '<b>' + root.util.escapeHtml(displayTitle) + '</b>';
+      return '<div class="source-card"><div class="source-card-meta"><small>SOURCE ' + (index + 1) + ' · #' + source.id + '</small>' +
+        '<span class="source-kind">' + sourceKind + '</span></div>' +
         link +
         '<small title="' + root.util.escapeHtml(source.contentHash || "") + '">' + root.util.escapeHtml(shortHash(source.contentHash)) + '</small></div>';
     }).join("") : '<div class="empty-copy">没有来源</div>';

@@ -506,7 +506,7 @@ class ResearchWorkflow:
                         if document
                         else "published internal article"
                         if candidate.sourceType == "internal"
-                        else "offline corpus"
+                        else "离线内置语料"
                         if candidate.sourceType == "offline"
                         else "web search snippet"
                     ),
