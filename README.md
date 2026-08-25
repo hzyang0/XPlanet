@@ -48,3 +48,5 @@ java -jar xplanet-seckill\target\xplanet-seckill-1.0.0.jar
 - 普通订单通过 `UPDATE product ... WHERE stock >= quantity` 防止超卖；
 - 秒杀以 Redis 降低数据库竞争，但以 MySQL 条件扣减作为最终库存账本；
 - 消息投递和消费者处理均可重试，借助唯一键保持幂等。
+
+新手阅读路线、实现说明、简历表述与面试问答见 [秒杀学习与面试手册](docs/SECKILL-LEARNING-AND-INTERVIEW-GUIDE.md)。
