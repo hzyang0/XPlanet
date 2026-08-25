@@ -27,7 +27,8 @@ public class RedisReservationService {
         redis.execute(RELEASE, List.of(SeckillRedisKeys.stock(activityId), SeckillRedisKeys.buyers(activityId)), String.valueOf(userId));
     }
     public void warm(Long activityId, int stock) {
-        redis.opsForValue().set(SeckillRedisKeys.stock(activityId), String.valueOf(stock));
-        redis.delete(SeckillRedisKeys.buyers(activityId));
+        // A running activity must never be reset by a scheduled warm-up: doing so would
+        // erase buyer markers and reintroduce duplicate purchase opportunities.
+        redis.opsForValue().setIfAbsent(SeckillRedisKeys.stock(activityId), String.valueOf(stock));
     }
 }

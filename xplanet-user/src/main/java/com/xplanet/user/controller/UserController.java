@@ -9,8 +9,12 @@ import com.xplanet.user.entity.User;
 import com.xplanet.user.mapper.UserMapper;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
+import javax.validation.Valid;
+import javax.validation.constraints.NotBlank;
+import javax.validation.constraints.Size;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -18,41 +22,58 @@ import java.util.Map;
 @RequestMapping("/api/user")
 @RequiredArgsConstructor
 public class UserController {
-
     private final UserMapper userMapper;
+    private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
     @GetMapping("/{id}")
     public R<User> get(@PathVariable Long id) {
-        User u = userMapper.selectById(id);
-        if (u == null) throw new BizException(ErrorCode.USER_NOT_FOUND);
-        return R.ok(u);
+        User user = userMapper.selectById(id);
+        if (user == null) throw new BizException(ErrorCode.USER_NOT_FOUND);
+        user.setPasswordHash(null);
+        return R.ok(user);
     }
 
-    /**
-     * 登录:校验用户名(demo 简化,不校验密码),签发 token。
-     * 生产应校验密码哈希(BCrypt)。这里聚焦演示 token 鉴权链路。
-     *
-     * <p>限流防撞库:同一 IP 每分钟最多 5 次登录尝试。
-     */
     @PostMapping("/login")
     @com.xplanet.common.ratelimit.RateLimit(key = "user_login", limit = 5, windowSeconds = 60)
     public R<Map<String, Object>> login(@RequestBody LoginRequest req) {
-        User u = userMapper.selectOne(new LambdaQueryWrapper<User>()
-                .eq(User::getUsername, req.getUsername()));
-        if (u == null) {
-            throw new BizException(ErrorCode.USER_NOT_FOUND);
+        User user = userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getUsername, req.getUsername()));
+        if (user == null || req.getPassword() == null || !passwordEncoder.matches(req.getPassword(), user.getPasswordHash())) {
+            throw new BizException(2003, "账号或密码错误");
         }
-        String token = TokenUtil.issue(u.getId());
+        return R.ok(session(user));
+    }
+
+    @PostMapping("/register")
+    public R<Map<String, Object>> register(@Valid @RequestBody RegisterRequest req) {
+        String username = req.getUsername().trim();
+        if (userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getUsername, username)) != null) {
+            throw new BizException(2004, "账号已存在");
+        }
+        User user = new User();
+        user.setUsername(username);
+        user.setNickname(req.getNickname() == null || req.getNickname().isBlank() ? username : req.getNickname().trim());
+        user.setPasswordHash(passwordEncoder.encode(req.getPassword()));
+        userMapper.insert(user);
+        return R.ok(session(user));
+    }
+
+    private Map<String, Object> session(User user) {
         Map<String, Object> data = new HashMap<>();
-        data.put("token", token);
-        data.put("userId", u.getId());
-        data.put("nickname", u.getNickname());
-        return R.ok(data);
+        data.put("token", TokenUtil.issue(user.getId()));
+        data.put("userId", user.getId());
+        data.put("nickname", user.getNickname());
+        return data;
     }
 
     @Data
-    public static class LoginRequest {
+    public static class LoginRequest { private String username; private String password; }
+
+    @Data
+    public static class RegisterRequest {
+        @NotBlank(message = "请输入账号") @Size(min = 3, max = 32, message = "账号长度需为 3-32 位")
         private String username;
-        private String password;  // demo 未校验
+        @NotBlank(message = "请输入密码") @Size(min = 6, max = 72, message = "密码长度需为 6-72 位")
+        private String password;
+        @Size(max = 32, message = "昵称不能超过 32 位") private String nickname;
     }
 }
