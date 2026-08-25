@@ -48,6 +48,7 @@ public class SeckillService {
     }
 
     public SeckillRequestVO query(Long requestId, Long userId) {
+        if (userId == null) throw new BizException(ErrorCode.USER_NOT_LOGIN);
         SeckillRequest r = requestMapper.selectById(requestId);
         if (r == null || !r.getUserId().equals(userId)) throw new BizException(ErrorCode.NOT_FOUND);
         SeckillRequestVO vo = new SeckillRequestVO();

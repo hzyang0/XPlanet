@@ -20,7 +20,17 @@ Redis 是高并发准入层，不是最终账本；`UPDATE ... SET available_sto
 ```powershell
 docker compose -f docker/docker-compose-infra.yml up -d
 .\scripts\apply-schema.ps1 # only required when reusing an existing Docker MySQL volume
-mvn -pl xplanet-user,xplanet-seckill -am spring-boot:run
+# 在两个 PowerShell 窗口分别执行：
+mvn -f xplanet-user/pom.xml spring-boot:run
+mvn -f xplanet-seckill/pom.xml spring-boot:run
+```
+
+如果本机同时运行了旧版 XPlanet（其 RocketMQ Broker 对容器内地址注册），使用隔离消息队列进行秒杀验证：
+
+```powershell
+docker compose -f docker/docker-compose-seckill-rmq.yml up -d
+$env:ROCKETMQ_NS='localhost:19876'
+mvn -f xplanet-seckill/pom.xml spring-boot:run
 ```
 
 启动后使用 `POST http://localhost:8083/api/user/login`，请求体 `{"username":"alice","password":"password"}` 获得 token。然后对 8080 的受保护请求加头：`Authorization: Bearer <token>`。

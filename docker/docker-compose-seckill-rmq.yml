@@ -1,0 +1,26 @@
+# Isolated RocketMQ for local flash-sale verification. It intentionally uses different
+# container names and ports, so it never disrupts another XPlanet Docker stack.
+services:
+  namesrv:
+    image: apache/rocketmq:4.9.7
+    container_name: xp-seckill-rmq-namesrv
+    command: sh mqnamesrv
+    ports:
+      - "19876:9876"
+  broker:
+    image: apache/rocketmq:4.9.7
+    container_name: xp-seckill-rmq-broker
+    depends_on:
+      - namesrv
+    command: sh mqbroker -n namesrv:9876 -c /home/rocketmq/rocketmq-4.9.7/conf/broker.conf
+    ports:
+      - "11909:11909"
+      - "11911:11911"
+    volumes:
+      - ./broker-seckill.conf:/home/rocketmq/rocketmq-4.9.7/conf/broker.conf:ro
+  topic-init:
+    image: apache/rocketmq:4.9.7
+    container_name: xp-seckill-rmq-topic-init
+    depends_on:
+      - broker
+    command: sh -c "sleep 10; sh mqadmin updateTopic -n namesrv:9876 -b broker:11911 -t xp_seckill_order_topic -r 4 -w 4"
