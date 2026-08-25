@@ -19,6 +19,7 @@ Redis 是高并发准入层，不是最终账本；`UPDATE ... SET available_sto
 
 ```powershell
 docker compose -f docker/docker-compose-infra.yml up -d
+.\scripts\apply-schema.ps1 # only required when reusing an existing Docker MySQL volume
 mvn -pl xplanet-user,xplanet-seckill -am spring-boot:run
 ```
 

@@ -1,42 +1,13 @@
-# Benchmark
+# 压测说明
 
-## 准备
+不要复用其他项目的 QPS 数字。本项目只记录在本机、明确硬件和服务配置下获得的结果。
 
-```bash
-# Ubuntu / WSL
-sudo apt-get install -y wrk
-# macOS
-brew install wrk
-```
-
-## 1. 文章详情(测二级缓存效果)
+1. 启动 MySQL、Redis、RocketMQ、用户服务、秒杀服务并预热活动 1。
+2. 用不同用户令牌进行正确性验证；同一个 token 的重复请求应被“一人一单”拒绝。
+3. 复制 `seckill.lua`，替换令牌后运行：
 
 ```bash
-# 冷启动:第一次基本是回源(慢),之后 L1 + L2 命中
-wrk -t8 -c200 -d30s -s benchmark/article_detail.lua http://localhost:8081
+wrk -t4 -c100 -d20s -s benchmark/seckill.lua http://localhost:8080
 ```
 
-期望结果(单机 article 实例, 8C16G):
-
-| 场景 | QPS | P50 | P99 |
-|---|---|---|---|
-| 无任何缓存(直接走 DB) | ~1.2k | 80ms | 180ms |
-| 仅 Redis | ~3.5k | 25ms | 70ms |
-| Redis + Caffeine L1 | ~4.8k | 8ms | 45ms |
-
-(对照实验:把 ArticleCacheManager.init() 里 maximumSize 改成 0 即可关闭 L1)
-
-## 2. 点赞写入(测 MQ 削峰)
-
-```bash
-wrk -t8 -c500 -d30s -s benchmark/like.lua http://localhost:8082
-```
-
-期望:
-- 接口侧 QPS ~ 8k+(全异步,只写 Redis + 发 MQ)
-- DB 侧 article 表 UPDATE QPS 约 接口 QPS 的 1/5 ~ 1/10(批量合并效果)
-- 通过 Grafana 对比 `mysql_global_status_com_update` 与接口 QPS
-
-## 记录数据
-
-请把每次压测的输出贴到 `docs/benchmark-results.md`,这是面试时唯一能让"QPS 提升 4 倍"不是空话的依据。
+4. 每次压测后检查 `seckill_order` 总量及 `seckill_activity.available_stock`。库存永不为负、订单数不超过活动库存，才算通过。
