@@ -42,6 +42,8 @@ docs/XPlanet深度进阶手册.md
 RESUME-DESCRIPTION.md
 
 # Benchmark 结果保留模板,具体结果可选择性提交
+benchmark/tokens.txt
+benchmark/results-*.txt
 
 # 本地参考文档(阅读代码时用,不上传 GitHub)
 SLIM-AND-FIX.md
