@@ -1,76 +1,53 @@
--- xplanet schema
 CREATE DATABASE IF NOT EXISTS xplanet DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE xplanet;
 
-DROP TABLE IF EXISTS `user`;
-CREATE TABLE `user` (
-    `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `username`    VARCHAR(64)  NOT NULL,
-    `nickname`    VARCHAR(64)  NOT NULL DEFAULT '',
-    `avatar`      VARCHAR(255) NOT NULL DEFAULT '',
-    `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_username` (`username`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
+CREATE TABLE IF NOT EXISTS `user` (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  username VARCHAR(64) NOT NULL,
+  nickname VARCHAR(64) NOT NULL DEFAULT '',
+  avatar VARCHAR(255) NOT NULL DEFAULT '',
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id), UNIQUE KEY uk_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-DROP TABLE IF EXISTS `article`;
-CREATE TABLE `article` (
-    `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `author_id`   BIGINT UNSIGNED NOT NULL,
-    `title`       VARCHAR(200)    NOT NULL,
-    `content`     MEDIUMTEXT      NOT NULL,
-    `tags`        VARCHAR(255)    NOT NULL DEFAULT '',
-    `like_count`  BIGINT          NOT NULL DEFAULT 0,
-    `view_count`  BIGINT          NOT NULL DEFAULT 0,
-    `deleted`     TINYINT         NOT NULL DEFAULT 0,
-    `create_time` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    `update_time` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    KEY `idx_author_id` (`author_id`),
-    KEY `idx_create_time` (`create_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文章表';
+CREATE TABLE IF NOT EXISTS seckill_activity (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  sku_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(128) NOT NULL,
+  total_stock INT NOT NULL,
+  available_stock INT NOT NULL,
+  start_time DATETIME NOT NULL, end_time DATETIME NOT NULL,
+  status TINYINT NOT NULL DEFAULT 1 COMMENT '1=active,0=closed',
+  PRIMARY KEY (id), KEY idx_activity_status_time(status,start_time,end_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-DROP TABLE IF EXISTS `article_like`;
-CREATE TABLE `article_like` (
-    `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `user_id`     BIGINT UNSIGNED NOT NULL,
-    `article_id`  BIGINT UNSIGNED NOT NULL,
-    `status`      TINYINT         NOT NULL DEFAULT 1 COMMENT '1=有效,0=已取消',
-    `create_time` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    `update_time` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_user_article` (`user_id`, `article_id`),
-    KEY `idx_article_id` (`article_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文章点赞表';
+CREATE TABLE IF NOT EXISTS seckill_request (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  request_no CHAR(36) NOT NULL,
+  activity_id BIGINT UNSIGNED NOT NULL, sku_id BIGINT UNSIGNED NOT NULL, user_id BIGINT UNSIGNED NOT NULL,
+  status VARCHAR(16) NOT NULL COMMENT 'QUEUED/SUCCEEDED/FAILED',
+  order_id BIGINT UNSIGNED NULL, fail_reason VARCHAR(255) NULL,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY(id), UNIQUE KEY uk_request_no(request_no), UNIQUE KEY uk_activity_user(activity_id,user_id), KEY idx_request_status(status,create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-DROP TABLE IF EXISTS `comment`;
-CREATE TABLE `comment` (
-    `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `article_id`  BIGINT UNSIGNED NOT NULL,
-    `user_id`     BIGINT UNSIGNED NOT NULL,
-    `parent_id`   BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '父评论id,0表示顶级评论',
-    `content`     VARCHAR(1000)   NOT NULL,
-    `deleted`     TINYINT         NOT NULL DEFAULT 0,
-    `create_time` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    KEY `idx_article` (`article_id`),
-    KEY `idx_parent` (`parent_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评论表';
+CREATE TABLE IF NOT EXISTS seckill_order (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  event_id CHAR(36) NOT NULL, activity_id BIGINT UNSIGNED NOT NULL, sku_id BIGINT UNSIGNED NOT NULL, user_id BIGINT UNSIGNED NOT NULL,
+  status VARCHAR(16) NOT NULL, create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(id), UNIQUE KEY uk_order_event(event_id), UNIQUE KEY uk_order_activity_user(activity_id,user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 测试数据
-INSERT INTO `user` (`id`, `username`, `nickname`) VALUES
-(1, 'alice', 'Alice'),
-(2, 'bob',   'Bob'),
-(100, 'demo', 'Demo User');
+CREATE TABLE IF NOT EXISTS seckill_order_outbox (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  event_id CHAR(36) NOT NULL, request_id BIGINT UNSIGNED NOT NULL, payload TEXT NOT NULL,
+  status VARCHAR(16) NOT NULL COMMENT 'PENDING/RETRY/SENT', retry_count INT NOT NULL DEFAULT 0,
+  next_retry_time DATETIME NOT NULL, last_error VARCHAR(500) NULL,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_time DATETIME NULL,
+  PRIMARY KEY(id), UNIQUE KEY uk_outbox_event(event_id), KEY idx_outbox_retry(status,next_retry_time,id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-INSERT INTO `article` (`id`, `author_id`, `title`, `content`, `tags`) VALUES
-(1, 1, 'Caffeine + Redis 二级缓存实战', '本文介绍如何构建抗热点的二级缓存架构...', 'cache,redis,caffeine'),
-(2, 1, 'RocketMQ 批量消费削峰',         '通过缓冲合并把同一文章的 N 次点赞合成 1 次 update...', 'mq,rocketmq'),
-(3, 2, 'Cache Aside 延迟双删全解析',    '为什么必须双删,以及第二删延迟到底设多少...', 'cache,consistency'),
-(100, 1, '【热点】高并发缓存击穿应对',     '这是一篇模拟热点文章,用于演示缓存击穿时的分布式锁重建', 'cache,hotkey');
-
-INSERT INTO `comment` (`article_id`, `user_id`, `parent_id`, `content`) VALUES
-(1, 2, 0, '写得很清楚,二级缓存这块受教了'),
-(1, 1, 1, '谢谢,后面会补一篇一致性的'),
-(1, 100, 0, 'Caffeine 的 W-TinyLFU 那段能再展开讲讲吗'),
-(2, 2, 0, '削峰批量合并这个思路很实用');
+INSERT IGNORE INTO `user` (id,username,nickname) VALUES (1,'alice','Alice'),(2,'bob','Bob'),(3,'carol','Carol');
+INSERT IGNORE INTO seckill_activity (id,sku_id,title,total_stock,available_stock,start_time,end_time,status)
+VALUES (1,10001,'机械键盘限量秒杀',100,100,DATE_SUB(NOW(),INTERVAL 1 HOUR),DATE_ADD(NOW(),INTERVAL 7 DAY),1);

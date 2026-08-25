@@ -1,148 +1,44 @@
-# XPlanet
+# XPlanet Flash Sale
 
-> 开发者社区平台 —— 聚焦「读多写多」高并发场景下的**二级缓存、缓存一致性、点赞削峰**三个核心问题的工程实践。
+一个可本地运行、可压测验证的高并发限量商品下单系统。它不做购物车、支付和完整商城，而是把秒杀中最难讲清的链路做成闭环：**原子准入、异步削峰、可靠消息、幂等落单、最终库存保护和失败补偿**。
 
-[![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.18-brightgreen.svg)](https://spring.io/projects/spring-boot)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+## 核心流程
 
-## 项目定位
-
-社区类应用的真实瓶颈在于:**文章详情读多写少(热点读)** 和 **点赞瞬时高并发(热点写)**。
-本项目围绕这两个真实诉求做深,覆盖以下能力:
-
-**缓存与一致性**
-- **Caffeine + Redis 二级缓存**:本地缓存挡热点读、降 Redis 网络开销;分布式缓存兜住多实例
-- **Cache Aside + 延迟双删 + MQ 广播**:保证缓存与 DB 最终一致,并解决多实例本地缓存同步失效
-- **三大问题防护**:空值缓存防穿透、分布式锁防击穿、TTL 随机防雪崩
-
-**高并发写**
-- **RocketMQ 削峰**:点赞写入异步化,消费端按文章聚合批量落库,削减 DB 写压力
-- **Redis 共享缓冲**:点赞缓冲用 Redis Hash(HINCRBY 原子累加),实例崩溃不丢未落库增量
-- **幂等 + 顺序**:actionId 去重防重投,按 userId 分区保证同用户操作有序
-
-**并发控制与容错**
-- **Redisson 分布式锁**:缓存击穿时串行化重建,只放一个线程回源
-- **轻量限流**:注解 + Redis Lua 固定窗口,防接口被刷(比 Sentinel 轻、原理透明)
-- **服务降级**:user 服务故障返回兜底作者名、Redis 异常友好提示、重建抢锁失败降级查库
-
-**服务协作与业务**
-- **服务间调用**:article 调 user 服务取作者名,带调用缓存 + 降级
-- **文章列表分页 + 评论(两级嵌套)**:完整的社区业务闭环
-
-
-## 架构
-
-```
-              ┌──────────────┐   ┌──────────────┐   ┌──────────┐
-   前端演示页 ─┤ Article 8081 │   │Interaction   │   │ User     │
-              │ 文章+二级缓存 │   │  8082 点赞    │   │ 8083     │
-              └──────┬───────┘   └──────┬───────┘   └────┬─────┘
-                     │                  │                │
-            ┌────────┴──────────────────┴────────────────┘
-            │
-     ┌──────┴───────┐   ┌──────────┐   ┌─────────────┐
-     │ MySQL        │   │  Redis   │   │  RocketMQ   │
-     │ (主数据)      │   │(L2缓存+  │   │(点赞削峰 +   │
-     │              │   │ 锁+计数) │   │ L1广播失效) │
-     └──────────────┘   └──────────┘   └─────────────┘
+```text
+POST /activities/{id}/orders (Bearer Token)
+  -> Redis Lua: 活动预热库存 + 一人一单标记 + DECR（一个原子操作）
+  -> MySQL: seckill_request + seckill_order_outbox（同一事务）
+  -> 定时 Relay: Outbox 重试投递 RocketMQ
+  -> Consumer: eventId 幂等 + DB 条件扣库存 + 唯一订单
+  -> GET /requests/{requestId}: QUEUED / SUCCEEDED / FAILED
 ```
 
-详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+Redis 是高并发准入层，不是最终账本；`UPDATE ... SET available_stock=available_stock-1 WHERE available_stock>0` 是最终防超卖保护。RocketMQ 为至少一次投递，因此消费者同时使用 `event_id` 唯一键和 `(activity_id,user_id)` 唯一键。若数据库写入失败，准入记录会通过 Lua 回补；若重复消息在扣库后才被发现，会回补数据库库存。
 
-## 模块说明
+## 运行
 
-| 模块 | 端口 | 职责 | 关键特性 |
-|---|---|---|---|
-| `xplanet-common` | - | 公共响应、异常、常量 | 全局异常处理、缓存 key 规范 |
-| `xplanet-api` | - | DTO / VO | 跨服务数据契约 |
-| `xplanet-article` | 8081 | 文章服务 | **二级缓存、延迟双删、批量消费点赞落库、列表分页、评论、限流、调用 user 服务** |
-| `xplanet-interaction` | 8082 | 点赞服务 | **MQ 顺序消息、幂等、削峰、Redis 降级** |
-| `xplanet-user` | 8083 | 用户服务 | 用户信息 CRUD(被 article 调用) |
-
-## 快速开始(本地混合模式)
-
-推荐:中间件用 Docker,3 个服务用 IDE / 命令行跑(便于断点调试)。
-
-### 1. 启动中间件
-
-```bash
+```powershell
 docker compose -f docker/docker-compose-infra.yml up -d
-# 等待 MySQL healthy(约 20-30s)
-docker compose -f docker/docker-compose-infra.yml ps
+mvn -pl xplanet-user,xplanet-seckill -am spring-boot:run
 ```
 
-启动 MySQL(3306,自动建表+测试数据)、Redis(6379)、RocketMQ(namesrv 9876 + broker 10911)。
+启动后使用 `POST http://localhost:8083/api/user/login`，请求体 `{"username":"alice","password":"password"}` 获得 token。然后对 8080 的受保护请求加头：`Authorization: Bearer <token>`。
 
-### 2. 编译
+首次启动需执行 Redis 预热（演示账号任意 token 均可）：
 
-```bash
-mvn -DskipTests clean install
+```powershell
+Invoke-RestMethod -Method Post -Headers @{Authorization='Bearer <token>'} http://localhost:8080/api/seckill/admin/activities/1/warmup
+Invoke-RestMethod -Method Post -Headers @{Authorization='Bearer <token>'} http://localhost:8080/api/seckill/activities/1/orders
+Invoke-RestMethod -Headers @{Authorization='Bearer <token>'} http://localhost:8080/api/seckill/requests/<requestId>
 ```
 
-### 3. 启动 3 个服务
+`sql/seckill-reset.sql` 仅用于本地复测：清理订单与请求，并重置活动数据库库存；之后必须再次预热 Redis。
 
-IDEA 直接 Run:`ArticleApplication`(8081)、`InteractionApplication`(8082)、`UserApplication`(8083)。
+## 验收标准
 
-或命令行(Windows 可用 `scripts/start-local.ps1` 一键起):
-```bash
-mvn -pl xplanet-article     -am spring-boot:run
-mvn -pl xplanet-interaction -am spring-boot:run
-mvn -pl xplanet-user        -am spring-boot:run
-```
+- 100 个库存、并发请求数大于 100 时，`seckill_order` 成功订单数不超过 100；
+- 相同用户重复提交始终返回同一个 requestId；
+- 停止 RocketMQ 后，Outbox 状态为 `RETRY`，恢复 MQ 后最终变为 `SENT`；
+- 同一 `eventId` 重复投递不会产生第二笔订单，也不会多扣数据库库存。
 
-### 4. 验证
-
-```bash
-# 文章详情(走二级缓存,读操作免登录)
-curl http://localhost:8081/api/article/1
-
-# 文章列表(分页)
-curl "http://localhost:8081/api/article/list?pageNum=1&pageSize=10"
-
-# 登录拿 token(写操作需要)
-TOKEN=$(curl -s -X POST -H "Content-Type: application/json" \
-  -d '{"username":"alice"}' http://localhost:8083/api/user/login \
-  | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
-
-# 点赞(带 token,异步落库)
-curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8082/api/like/1
-
-# 发评论(带 token)
-curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"articleId":1,"content":"不错"}' http://localhost:8081/api/comment
-```
-
-或直接打开 `xplanet-web/index.html`:先在顶部用用户名(alice/bob)登录,再操作。
-
-## 性能测试
-
-见 [`benchmark/README.md`](benchmark/README.md) 与 [`docs/benchmark-results.md`](docs/benchmark-results.md)。
-请用 wrk 脚本自测并填入真实数据,不要引用未经验证的数字。
-
-## 项目结构
-
-```
-xplanet/
-├── pom.xml
-├── xplanet-common/          # 公共
-├── xplanet-api/             # 契约
-├── xplanet-article/         # 文章服务 ★ 核心
-├── xplanet-interaction/     # 点赞服务 ★ 核心
-├── xplanet-user/            # 用户服务
-├── xplanet-web/             # 演示前端
-├── docker/
-│   ├── docker-compose-infra.yml   # 中间件(本地混合模式用这个)
-│   ├── docker-compose-app.yml     # 全 Docker 模式(可选)
-│   ├── Dockerfile.app
-│   └── broker.conf                # RocketMQ broker IP 配置
-├── sql/init.sql
-├── benchmark/               # wrk 压测脚本
-└── docs/
-    ├── ARCHITECTURE.md
-    └── benchmark-results.md
-```
-
-## License
-
-[MIT](LICENSE)
+完整设计与压测步骤见 [docs/SECKILL-DESIGN.md](docs/SECKILL-DESIGN.md)。

@@ -10,14 +10,13 @@
     <packaging>pom</packaging>
 
     <name>xplanet</name>
-    <description>High-concurrency developer community platform</description>
+    <description>High-concurrency flash-sale order system</description>
 
     <modules>
         <module>xplanet-common</module>
         <module>xplanet-api</module>
         <module>xplanet-user</module>
-        <module>xplanet-article</module>
-        <module>xplanet-interaction</module>
+        <module>xplanet-seckill</module>
     </modules>
 
     <parent>
