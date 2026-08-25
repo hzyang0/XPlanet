@@ -21,6 +21,8 @@ Thumbs.db
 logs/
 *.log
 hs_err_pid*
+.playwright-cli/
+seckill-e2e.png
 
 # 本地配置 / 敏感
 *.local.yml

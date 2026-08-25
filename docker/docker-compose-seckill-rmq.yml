@@ -1,26 +1,47 @@
-# Isolated RocketMQ for local flash-sale verification. It intentionally uses different
-# container names and ports, so it never disrupts another XPlanet Docker stack.
+# Complete isolated infrastructure for the flash-sale project. Ports deliberately
+# differ from the legacy XPlanet stack so both can coexist during migration.
 services:
+  mysql:
+    image: mysql:8.0
+    container_name: xp-seckill-mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: xplanet
+      TZ: Asia/Shanghai
+    ports: ["13306:3306"]
+    volumes:
+      - ../sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - xp-seckill-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot123"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    container_name: xp-seckill-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["16379:6379"]
+    volumes: ["xp-seckill-redis-data:/data"]
   namesrv:
     image: apache/rocketmq:4.9.7
     container_name: xp-seckill-rmq-namesrv
     command: sh mqnamesrv
-    ports:
-      - "19876:9876"
+    ports: ["19876:9876"]
   broker:
     image: apache/rocketmq:4.9.7
     container_name: xp-seckill-rmq-broker
-    depends_on:
-      - namesrv
+    depends_on: [namesrv]
     command: sh mqbroker -n namesrv:9876 -c /home/rocketmq/rocketmq-4.9.7/conf/broker.conf
-    ports:
-      - "11909:11909"
-      - "11911:11911"
+    ports: ["11909:11909", "11911:11911"]
     volumes:
       - ./broker-seckill.conf:/home/rocketmq/rocketmq-4.9.7/conf/broker.conf:ro
   topic-init:
     image: apache/rocketmq:4.9.7
     container_name: xp-seckill-rmq-topic-init
-    depends_on:
-      - broker
+    depends_on: [broker]
     command: sh -c "sleep 10; sh mqadmin updateTopic -n namesrv:9876 -b broker:11911 -t xp_seckill_order_topic -r 4 -w 4"
+volumes:
+  xp-seckill-mysql-data:
+  xp-seckill-redis-data:
