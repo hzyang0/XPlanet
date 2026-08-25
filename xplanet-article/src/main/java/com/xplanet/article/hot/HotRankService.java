@@ -26,8 +26,8 @@ import java.util.stream.Collectors;
  * <ul>
  *   <li><b>存储</b>:Redis ZSet,score=热度分,member=articleId。
  *       ZSet 天然按 score 有序,O(log N) 取 Top N,完美匹配排行榜场景。</li>
- *   <li><b>热度算法</b>:简化版 = likeCount * 2 + viewCount + 时间衰减。
- *       让新文章有出头机会,避免老文章长期霸榜。生产可加入评论数、转发数等。</li>
+ *   <li><b>热度算法</b>:当前简化为 likeCount * 2 + viewCount。
+ *       当前没有时间衰减；需要防止老文章长期霸榜时再引入创建时间权重。</li>
  *   <li><b>更新时机</b>:定时每分钟刷一次,从 DB 全量重算后 INTO ZSet。
  *       <b>不在每次点赞时实时更新</b>——理由:
  *       (1) 点赞链路已经在削峰,再实时更新热榜会破坏削峰效果;
@@ -37,7 +37,7 @@ import java.util.stream.Collectors;
  *   <li><b>降级</b>:Redis ZSet 为空(冷启动还没刷过)时,直接查 DB 兜底。</li>
  * </ul>
  *
- * <h3>面试讲点</h3>
+ * <h3>设计说明</h3>
  * <p>1. Redis ZSet 实现排行榜是经典用法,会被问"为什么不用 List/Set":
  *      List 不能按分值排序,Set 没有分值。ZSet = Set + score,完美契合。<br>
  *    2. 排行榜的实时性 vs 性能权衡——一定要能说出"为什么不实时更新"。<br>
@@ -94,7 +94,7 @@ public class HotRankService {
     @Scheduled(fixedDelay = 60_000, initialDelay = 5_000)
     public void refresh() {
         try {
-            // 取所有未删除文章(实际场景应分页,这里 demo 简化)
+            // 当前直接读取所有未删除文章；数据量增长后应改为分页或增量计算。
             List<Article> all = articleMapper.selectList(
                     new LambdaQueryWrapper<Article>().eq(Article::getDeleted, 0));
             if (all.isEmpty()) return;
@@ -128,7 +128,7 @@ public class HotRankService {
     }
 
     /**
-     * 热度分计算:点赞权重高,浏览次之。简化版,生产可加评论/转发/时间衰减。
+     * 热度分计算:点赞权重高,浏览次之。生产可按真实数据增加评论或时间衰减。
      */
     private double calcScore(Article a) {
         long like = a.getLikeCount() == null ? 0 : a.getLikeCount();

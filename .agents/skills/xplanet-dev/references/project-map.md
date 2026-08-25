@@ -1,120 +1,51 @@
-# XPlanet Project Map
+# XPlanet 后端项目地图
 
-## Stack
+XPlanet 是一个开发者社区后端，采用 Gateway + 用户、文章、互动三个 Spring Boot 服务。仓库不包含 AI、Agent 或 Python 运行时。
 
-- Java 17, Maven multi-module reactor, Spring Boot 2.7.18.
-- MyBatis-Plus and MySQL 8 for persistence.
-- Redis 7, Redisson, and Caffeine for shared/local caching, locks, and rate limiting.
-- RocketMQ 4.9.7 for reliable like-event delivery, cache invalidation, and AI commands.
-- Docker Compose for local MySQL, Redis, RocketMQ nameserver, and broker.
-- `xplanet-web/index.html` is a static single-file demo UI; there is no Node build.
-- Spring Cloud Gateway is the unified external entrypoint. In full Docker mode only port 8080 is published.
+## 模块与职责
 
-## Modules and ports
-
-| Module | Port | Responsibility |
+| 模块 | 默认端口 | 职责 |
 | --- | ---: | --- |
-| `xplanet-common` | - | Shared result types, exceptions, authentication, and rate limiting |
-| `xplanet-api` | - | Cross-service DTO and VO contracts |
-| `xplanet-gateway` | 8080 | Routing, CORS, request TraceId, and first-layer JWT validation |
-| `xplanet-user` | 8083 | User lookup, bcrypt password verification, and JWT/JWS issuing |
-| `xplanet-article` | 8081 | Articles, comments, two-level cache, durable cache-invalidation Outbox, user lookup, durable like-count projection |
-| `xplanet-interaction` | 8082 | Article validation, like state machine, Transactional Outbox, and recoverable RocketMQ relay |
-| `xplanet-ai` | 8084 | AI task control plane, reliable command Outbox, progress SSE, reports, review, and publishing |
-| `xplanet-agent` | 8000 (internal) | Python/LangGraph bounded execution, checkpoints, evidence, writing, and evaluation |
+| `xplanet-gateway` | 8080 | JWT 校验、Trace ID、CORS 和 `/api/**` 路由 |
+| `xplanet-user` | 8083 | 注册、登录、密码哈希与用户资料 |
+| `xplanet-article` | 8081 | 文章、评论、二级缓存、热榜、缓存失效 Outbox、点赞计数投影 |
+| `xplanet-interaction` | 8082 | 点赞关系、幂等、点赞 Outbox 与 RocketMQ 投递 |
+| `xplanet-common` | - | 鉴权、限流、统一响应、Redis/Lua 等公共能力 |
+| `xplanet-api` | - | 服务间共享 DTO、请求和 VO |
 
-Important entrypoints:
+依赖组件：MySQL 为事实源；Redis 负责缓存、限流、热榜和点赞增量；RocketMQ 负责点赞和缓存失效事件的异步可靠传递。
 
-- `xplanet-gateway/.../GatewayApplication.java`
-- `xplanet-user/.../UserApplication.java`
-- `xplanet-article/.../ArticleApplication.java`
-- `xplanet-interaction/.../InteractionApplication.java`
-- `xplanet-ai/.../AiApplication.java`
-- `xplanet-agent/src/xplanet_agent/api.py`
+## 关键调用链
 
-## Local prerequisites
+### 文章详情
 
-Expected commands:
+`Gateway -> ArticleController -> ArticleServiceImpl -> ArticleCacheManager -> Caffeine -> Redis -> MySQL`
 
-```powershell
-java -version
-mvn -version
-docker version
-docker compose version
-```
+缓存重建采用 Redisson 锁与 Double Check；空值缓存、随机 TTL 和数据库降级分别应对穿透、雪崩和 Redis 故障。
 
-Expected local versions are Java 17 and a Maven version compatible with the root reactor. Docker must be able to reach its engine.
+### 点赞
 
-Environment variables have local defaults:
+`Gateway -> LikeService -> like_relation/like_outbox -> LikeOutboxPublisher -> RocketMQ -> LikeMessageConsumer -> Redis delta -> LikeCountProjectionJob -> MySQL`
 
-```text
-MYSQL_HOST=localhost
-MYSQL_USER=root
-MYSQL_PWD=root123
-REDIS_HOST=localhost
-REDIS_PWD=
-ROCKETMQ_NS=localhost:9876
-TOKEN_SECRET=<at least 32 UTF-8 bytes>
-```
+数据库唯一约束、幂等键和消费端事件状态共同保证重复投递不会重复计数。Outbox 将业务状态变化和待投递事件写在同一个事务中，失败后由调度任务重试。
 
-## Build and run
+### 文章变更
 
-Validate and start infrastructure:
+`ArticleServiceImpl -> article_change_outbox -> RocketMQ -> ArticleCacheInvalidator -> Redis + Caffeine`
+
+该链路用于多实例下同步清理文章详情缓存，避免只删除本地缓存造成旧值长期存在。
+
+## 常用验证命令
 
 ```powershell
-docker compose -f docker/docker-compose-infra.yml config
 docker compose -f docker/docker-compose-infra.yml up -d
-docker compose -f docker/docker-compose-infra.yml ps
-```
-
-Build the full reactor:
-
-```powershell
 mvn test
-mvn -DskipTests clean install
-```
 
-Start all services in separate PowerShell windows:
-
-```powershell
-.\scripts\start-local.ps1
-```
-
-For a single foreground service:
-
-```powershell
+$env:TOKEN_SECRET = "replace-with-a-development-secret-at-least-32-bytes"
 mvn -pl xplanet-user -am spring-boot:run
 mvn -pl xplanet-article -am spring-boot:run
 mvn -pl xplanet-interaction -am spring-boot:run
-mvn -pl xplanet-ai -am spring-boot:run
 mvn -pl xplanet-gateway -am spring-boot:run
 ```
 
-## Health and smoke checks
-
-```powershell
-Invoke-RestMethod http://localhost:8080/actuator/health
-Invoke-RestMethod http://localhost:8080/api/article/1
-Invoke-RestMethod 'http://localhost:8080/api/article/list?pageNum=1&pageSize=10'
-./scripts/smoke-test.ps1
-./scripts/test-agent-recovery.ps1
-```
-
-Protected write flows require a token from `POST /api/user/login`. Verify the controller and authentication filter before constructing the request because demo scripts and current code may drift.
-
-## Reading order by task
-
-- Beginner onboarding: `docs/BEGINNER-GUIDE.md` -> Gateway config/filters -> one controller-to-database request flow.
-- Architecture: root `pom.xml` -> module POMs -> `docs/ARCHITECTURE.md` -> application entrypoints and configs.
-- Persistence: `sql/init.sql` -> entity -> mapper/XML -> service transaction boundary.
-- Cache: article update/delete transaction -> cache-invalidation Outbox relay -> MQ invalidation consumer -> L1/L2 cache manager.
-- Likes: interaction validates the active article through typed OpenFeign -> state transition + Outbox transaction -> leased relay -> RocketMQ -> unique delta inbox -> transactional batch projection.
-- Authentication: Gateway first-layer validation -> user login -> token utility/interceptor in common -> protected controller and resource ownership check.
-- AI: task transaction + Outbox -> RocketMQ -> Java consumer -> Python Agent graph -> checkpoint/progress/result -> review -> OpenFeign article publish.
-- Performance: benchmark scripts and claims -> implementation/configuration -> fresh measurements. Never repeat benchmark numbers without reproducing or clearly labeling their source.
-
-## Current verification caveats
-
-- The reactor has tests across common, gateway, user, article, interaction, and AI; keep them green and add focused tests for changed invariants.
-- A green Maven build still does not prove Redis/RocketMQ/MySQL behavior; run the authenticated API and eventual-consistency smoke flow when infrastructure is available.
-- Preserve Docker volumes by default; `down -v` deletes local database and queue state.
+通过 `http://localhost:8080/actuator/health` 查看网关健康状态；根路径返回可用路由与前端入口提示。

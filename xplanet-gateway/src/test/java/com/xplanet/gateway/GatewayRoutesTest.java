@@ -26,6 +26,6 @@ class GatewayRoutesTest {
                 .block();
 
         assertThat(routeIds).containsExactlyInAnyOrder(
-                "user-service", "article-service", "interaction-service", "ai-service");
+                "user-service", "article-service", "interaction-service");
     }
 }

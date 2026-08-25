@@ -37,7 +37,7 @@ import java.util.function.Function;
  *
  * <h3>为什么不用 Spring Cache 注解?</h3>
  * <p>Spring Cache 在二级缓存、空值标记、分布式锁重建、随机 TTL 这些场景下定制困难,
- * 自己实现可控性更高,也是简历能讲清楚的关键。
+ * 自己实现便于明确控制缓存边界、重建策略和降级行为。
  */
 @Slf4j
 @Component

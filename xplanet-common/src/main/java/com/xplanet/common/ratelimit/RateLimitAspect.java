@@ -32,7 +32,7 @@ import java.util.Collections;
  * <p>"INCR 然后判断是否第一次再 EXPIRE" 是多步操作,并发下非原子会出问题
  * (比如 INCR 后还没 EXPIRE 就宕机,key 永不过期)。Lua 在 Redis 中原子执行,杜绝竞态。
  *
- * <h3>局限(面试可主动说)</h3>
+ * <h3>已知局限</h3>
  * <p>固定窗口有"临界问题":窗口边界前后各打满一次,瞬时可达 2 倍 limit。
  * 要更平滑可用滑动窗口或令牌桶(Redisson 的 RRateLimiter 就是令牌桶)。
  * 这里用固定窗口是因为实现最简单、够用,且便于讲清原理。

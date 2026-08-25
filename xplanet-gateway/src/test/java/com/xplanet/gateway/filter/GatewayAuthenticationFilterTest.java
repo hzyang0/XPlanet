@@ -49,7 +49,7 @@ class GatewayAuthenticationFilterTest {
     @Test
     void shouldForwardProtectedApiWithValidBearerToken() {
         String token = tokenService.issue(7L);
-        assertForwarded(MockServerHttpRequest.post("/api/ai/tasks")
+        assertForwarded(MockServerHttpRequest.post("/api/article")
                 .header("Authorization", "Bearer " + token)
                 .build());
     }
