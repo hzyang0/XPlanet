@@ -1,9 +1,9 @@
 name: Booking verification
 on:
   push:
-    paths: ['xplanet-booking/**', 'scripts/booking_e2e.py', '.github/workflows/booking.yml']
+    paths: ['xplanet-booking/**', 'pom.xml', 'scripts/booking_*', '.github/workflows/booking.yml']
   pull_request:
-    paths: ['xplanet-booking/**', 'scripts/booking_e2e.py', '.github/workflows/booking.yml']
+    paths: ['xplanet-booking/**', 'pom.xml', 'scripts/booking_*', '.github/workflows/booking.yml']
 permissions:
   contents: read
 jobs:

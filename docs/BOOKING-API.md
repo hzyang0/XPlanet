@@ -2,7 +2,7 @@
 
 ## 请求约定
 
-基础地址 `/api`。登录 / 注册取得 token，其他请求使用 `Authorization: Bearer <token>`。JSON 时间统一 UTC，无偏移 ISO 格式，例如 `2026-10-16T02:00:00`。错误使用真实 HTTP 状态码和 `{"status":409,"message":"原因"}`。
+基础地址 `/api`。登录 / 注册取得 token，其他请求使用 `Authorization: Bearer <token>`。JSON 时间响应统一带 UTC `Z`，例如 `2026-10-20T02:00:00Z`；无偏移输入按 UTC 解释以兼容历史客户端。错误使用真实 HTTP 状态码和 `{"status":409,"message":"原因"}`，包括 400 参数、403 权限、404 资源、405 方法、409 冲突及 415 Content-Type。
 
 列表默认 50 条，使用 limit（1～100）和 offset 分页。预约与通知按 ID 倒序，设备按 ID 正序。
 
@@ -30,6 +30,13 @@
 | POST | `/notifications/{id}/read` | 标记已读 |
 | GET | `/admin/users?q=alice` | 管理员检索用户，最多 100 条 |
 | GET | `/admin/summary` | 状态分布、占用时段、未送达事件数 |
+| GET | `/admin/operations` | 管理员查看积压年龄、隔离事件、实例维护次数与耗时 |
+| GET | `/admin/events` | 管理员查看最多100条隔离失败事件 |
+| POST | `/admin/events/{id}/retry` | 管理员将事件重新加入队列，操作独立审计 |
+| GET | `/equipment/{id}/blocks?from=...&to=...` | 查询最多31天的维修安排 |
+| POST | `/equipment/{id}/blocks` | 管理员创建维修时段，同键重放核对参数 |
+| DELETE | `/equipment/blocks/{blockId}` | 管理员幂等取消维修，不影响其他预约时隙 |
+| POST | `/reservations/{id}/reschedule` | 本人将已确认且未开始的预约原子改期，返回关联的新预约 |
 
 创建预约示例（替换成未来 30 天内时间）：
 
@@ -68,4 +75,20 @@
 7. 看 OutboxDispatcher，观察业务已提交但通知尚未送达的情况。
 8. 单独运行 BookingIntegrationTest 中的一个用例，修改规则并检查哪些断言应改变。
 
-进一步练习：新增设备工作日历，先规定停用日期与已有预约如何处理，再设计数据表、接口和并发测试。
+9. 看 `addBlock/removeBlock`、V3 迁移，理解维修和预约共用时隙排他与到期清理。
+10. 看 `reschedule`，跟踪取消原单、创建替代单与关联记录的事务回滚。
+11. 看 `OutboxDelivery`，理解单事件事务、退避、隔离、管理员重试审计。
+
+维修请求体：
+
+```json
+{"startAt":"2026-10-20T02:00:00Z","endAt":"2026-10-20T04:00:00Z","reason":"设备检修","requestKey":"maintenance-unique-key"}
+```
+
+改期请求体：
+
+```json
+{"startAt":"2026-10-21T02:00:00Z","endAt":"2026-10-21T04:00:00Z","requestKey":"reschedule-unique-key"}
+```
+
+时间请替换成未来30天内的半小时边界。维修最多7天；创建时有任何重叠有效预约、候补或停机都会返回409，不自动取消原预约。改期仅支持本人、同设备；目标不能绕过已有候补；失败保留原预约，需审批设备重新审批。同键同参数重放返回关联新单；改变参数或操作必须使用新键。

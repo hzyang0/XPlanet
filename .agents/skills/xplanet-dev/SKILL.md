@@ -20,7 +20,7 @@ Work from the repository root. Read `references/project-map.md` before the first
 2. On main, trace ApiController -> BookingService -> Store -> database transactions; inspect Models, AuthService, Maintenance and OutboxDispatcher for related behavior.
 3. Read `xplanet-booking/src/main/resources/db/migration` before changing persistence assumptions. Add new Flyway migrations; do not rewrite applied migrations.
 4. Use `docs/BOOKING-ARCHITECTURE.md`, `docs/BOOKING-API.md` and `docs/BOOKING-VALIDATION.md` as design intent and historical evidence, but verify claims against current code.
-5. Main is a single deployable booking application. The optimization and seckill branches have different architectures; do not introduce their modules or infrastructure into main automatically.
+5. Main is a single deployable booking application. The optimization branch has a different architecture; do not introduce its modules or infrastructure into main automatically.
 
 ## 3. Diagnose before changing
 

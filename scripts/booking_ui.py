@@ -3,7 +3,7 @@ Run against an isolated verification database.
 """
 import os,json,pathlib,datetime as dt
 from playwright.sync_api import sync_playwright,expect
-root=pathlib.Path(__file__).resolve().parents[1];out=root/'docs/screenshots';out.mkdir(parents=True,exist_ok=True)
+root=pathlib.Path(__file__).resolve().parents[1];out=root/'output/playwright';out.mkdir(parents=True,exist_ok=True)
 base=os.environ.get('BOOKING_URL','http://localhost:8080')
 import uuid
 run_id=uuid.uuid4().hex[:6]
@@ -35,6 +35,6 @@ with sync_playwright() as p:
  page.screenshot(path=str(out/'booking-reservations.png'),full_page=False)
  mobile=browser.new_context(viewport={'width':390,'height':844},is_mobile=True,timezone_id='Asia/Shanghai');mp=mobile.new_page();mp.goto(base+'/');expect(mp.locator('#auth-panel')).to_be_visible();assert mp.evaluate('document.documentElement.scrollWidth<=window.innerWidth');mp.screenshot(path=str(out/'booking-mobile.png'),full_page=True)
  assert not errors,errors
- (root/'docs/validation/browser.json').write_text(json.dumps({'desktop':'1440x1000','mobile':'390x844','login':'passed','reservation_and_cancel':'passed','audit':'passed','create_equipment':'passed','grant_training':'passed','approval':'passed','xss_text_rendering':'passed','mobile_overflow':False,'javascript_errors':errors},indent=2))
+ (out/'browser-current.json').write_text(json.dumps({'desktop':'1440x1000','mobile':'390x844','login':'passed','reservation_and_cancel':'passed','audit':'passed','create_equipment':'passed','grant_training':'passed','approval':'passed','xss_text_rendering':'passed','mobile_overflow':False,'javascript_errors':errors},indent=2))
  print('Browser checks passed: login, reserve, cancel, audit, equipment, training, approve, mobile.',flush=True)
  browser.close()

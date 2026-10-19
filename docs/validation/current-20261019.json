@@ -1,0 +1,13 @@
+{
+  "date": "2026-10-19",
+  "environment": {"os": "Windows 11", "java": "Temurin 17.0.19", "maven": "3.9.8", "logical_cpus": 28, "docker_memory_bytes": 16679346176, "database": "MySQL 8.4.11 in isolated Docker container"},
+  "h2_tests": {"tests": 47, "failures": 0, "errors": 0},
+  "mysql_tests": {"tests": 47, "failures": 0, "errors": 0},
+  "flyway": {"fresh_mysql": "V1,V2,V3 passed", "existing_h2": "V1 to V3 passed"},
+  "http_two_instances": {"users": 32, "confirmed": 1, "waitlisted": 31, "replays": 32, "fifo": "passed", "ownership": "passed"},
+  "browser": {"engine": "Edge via Playwright CLI", "login": "passed", "reschedule": "passed", "cancel": "passed", "maintenance": "passed", "calendar": "passed", "operations": "passed", "mobile": "390x844 passed", "javascript_errors": 0, "console_errors": 0},
+  "h2_recovery": {"forced_process_kill": "passed", "real_deadline_wait": "passed", "approval_expired": "passed", "waiter_offered": "passed", "notifications": "passed", "session": "passed", "replay": "passed"},
+  "load_reports": ["load-hot-20261019.json", "load-distributed-20261019.json"],
+  "database_invariants": {"terminal_slot_leaks": 0, "invalid_slot_owners": 0, "duplicate_inbox": 0, "pending_events_after_drain": 0},
+  "limits": ["Each load sample lasts 30 seconds and includes create, cancel and selected replay calls.", "No claim of maximum throughput, long-running stability or real laboratory deployment.", "MariaDB has not been rerun in this iteration."]
+}

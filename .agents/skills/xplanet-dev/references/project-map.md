@@ -12,17 +12,19 @@ main 不依赖旧社区、秒杀、AI、Redis、RocketMQ 或独立 Gateway 模�
 - `ApiController`：接口、参数校验和归属检查。
 - `BookingService`：设备行锁、预约状态、候补、公平性、资格、审批、签到、到期维护。
 - `Store`：JDBC、半小时时隙分配与释放、审计和 Outbox。
-- `OutboxDispatcher`：同库 Outbox -> Inbox，投递和确认同事务。
-- `Maintenance`：逐设备独立事务维护、通知投递、会话清理。
+- `OutboxDispatcher` / `OutboxDelivery`：单事件同库 Outbox -> Inbox 事务、退避、五次失败隔离与管理员重试。
+- `Maintenance`：设备游标分页、逐设备独立事务维护、通知投递、会话清理。
 - `AuthService` / `SecurityConfig`：BCrypt、随机 Bearer Token、Token 哈希、角色权限。
 
 ## 关键不变量
 
 1. `(equipment_id, slot_at)` 主键保证同一时隙只有一条占用。
-2. 资源写操作先锁设备行；READ_COMMITTED 下锁后重读预约，状态条件更新防止旧状态覆盖。
+2. 创建/改期/创建维修按用户行→设备行锁顺序；其他路径只锁设备行，不反向加用户锁。READ_COMMITTED下锁后重读预约，条件更新防止旧状态覆盖。
 3. `(user_id, request_key)` 唯一且重放核对参数。
 4. 预约、时隙、审计、Outbox 同事务；Inbox 与投递确认同事务，`event_id` 唯一。
 5. 期限持久化，进程重启后扫描恢复；H2 不能替代真实共享数据库验证。
+6. 维修和预约共用时隙主键，且时隙必须且只能绑定reservation_id或block_id。
+7. 改期取消原单、创建新单和保存关联同事务；任何失败保留原单，不能跳过候补或设备审批。
 
 ## 命令与文档
 

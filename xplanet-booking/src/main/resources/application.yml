@@ -15,6 +15,10 @@ spring:
   sql:
     init:
       mode: never
+  task:
+    scheduling:
+      pool:
+        size: 2
 management:
   endpoints:
     web:
@@ -28,6 +32,8 @@ booking:
   admin-password: ${ADMIN_PASSWORD:}
   scheduler-enabled: ${SCHEDULER_ENABLED:true}
   scheduler-delay-ms: 5000
+  maintenance-page-size: 100
+  outbox-delay-ms: 500
   offer-minutes: 10
   approval-minutes: 30
   no-show-minutes: 15

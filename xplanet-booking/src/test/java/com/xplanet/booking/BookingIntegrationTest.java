@@ -96,11 +96,14 @@ class BookingIntegrationTest {
     clock.at(LocalDateTime.of(2026, 10, 15, 0, 0));
     for (String table :
         List.of(
+            "reservation_reschedule",
+            "equipment_audit",
             "event_retry_audit",
             "inbox_notification",
             "event_outbox",
             "reservation_audit",
             "reservation_slot",
+            "equipment_block",
             "reservation",
             "qualification",
             "auth_session",
@@ -451,7 +454,7 @@ class BookingIntegrationTest {
     Reservation a = create(owner);
     assertThatThrownBy(
             () ->
-                jdbc.update("INSERT INTO reservation_slot VALUES(?,?,?)", equipment, start, a.id()))
+                jdbc.update("INSERT INTO reservation_slot(equipment_id,slot_at,reservation_id) VALUES(?,?,?)", equipment, start, a.id()))
         .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
   }
 
@@ -544,6 +547,92 @@ class BookingIntegrationTest {
     assertThat(outbox.dispatch()).isZero();
     assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM inbox_notification", Integer.class)).isEqualTo(2);
     assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM event_retry_audit", Integer.class)).isEqualTo(1);
+  }
+
+  @Test
+  void maintenanceSharesSlotExclusionAndSupportsIdempotentRemoval() {
+    BlockInput in = new BlockInput(start, end, "定期检修", "maintenance-001");
+    Map<String, Object> block = booking.addBlock(admin, equipment, in);
+    long id = ((Number) block.get("id")).longValue();
+    assertThat(booking.addBlock(admin, equipment, in).get("id")).isEqualTo(block.get("id"));
+    conflict(() -> create(owner));
+    assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservation_slot WHERE block_id=?", Integer.class, id)).isEqualTo(4);
+    assertThatThrownBy(() -> booking.removeBlock(other, id)).isInstanceOf(Problem.class);
+    booking.removeBlock(admin, id);
+    Reservation reserved = create(owner);
+    booking.removeBlock(admin, id);
+    assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservation_slot WHERE reservation_id=?", Integer.class, reserved.id())).isEqualTo(4);
+  }
+
+  @Test
+  void maintenanceRacingBookingCannotTakeSameSlots() throws Exception {
+    ExecutorService pool = Executors.newFixedThreadPool(2);
+    try {
+      Future<Boolean> a = pool.submit(() -> {
+        try { create(owner); return true; } catch (Problem p) { assertThat(p.status()).isEqualTo(409); return false; }
+      });
+      Future<Boolean> b = pool.submit(() -> {
+        try { booking.addBlock(admin, equipment, new BlockInput(start, end, "检查", "maintenance-race")); return true; }
+        catch (Problem p) { assertThat(p.status()).isEqualTo(409); return false; }
+      });
+      assertThat(List.of(a.get(10, TimeUnit.SECONDS), b.get(10, TimeUnit.SECONDS))).containsExactlyInAnyOrder(true, false);
+      assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservation_slot", Integer.class)).isEqualTo(4);
+    } finally { pool.shutdownNow(); }
+  }
+
+  @Test
+  void maintenanceAutomaticallyEndsAndIsAudited() {
+    booking.addBlock(admin, equipment, new BlockInput(start, end, "检查", "maintenance-expiry"));
+    moveTo(end);
+    assertThat(store.dueEquipment(0, 100, LocalDateTime.now(clock), 15)).contains(equipment);
+    booking.sweep(equipment);
+    booking.sweep(equipment);
+    assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservation_slot", Integer.class)).isZero();
+    assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM equipment_audit WHERE action='MAINTENANCE_ENDED'", Integer.class)).isEqualTo(1);
+  }
+
+  @Test
+  void rescheduleIsAtomicAndReplaysBothOriginalAndReplacement() {
+    CreateReservation initial = input(equipment, start, end, "reschedule-original");
+    Reservation a = booking.create(owner, initial);
+    Reschedule change = new Reschedule(end, end.plusHours(1), "reschedule-new-key");
+    Reservation replacement = booking.reschedule(owner, a.id(), change);
+    assertThat(store.reservation(a.id()).status()).isEqualTo(Status.CANCELLED);
+    assertThat(replacement.status()).isEqualTo(Status.CONFIRMED);
+    assertThat(replacement.startAt()).isEqualTo(end);
+    assertThat(booking.reschedule(owner, a.id(), change).id()).isEqualTo(replacement.id());
+    assertThat(booking.create(owner, initial).id()).isEqualTo(a.id());
+    conflict(() -> booking.reschedule(owner, a.id(), new Reschedule(end.plusHours(1), end.plusHours(2), change.requestKey())));
+    assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservation_slot", Integer.class)).isEqualTo(2);
+  }
+
+  @Test
+  void failedRescheduleKeepsOriginalAndDoesNotBypassApproval() {
+    Reservation original = create(owner);
+    booking.create(other, input(equipment, end, end.plusHours(1), "reschedule-blocker"));
+    conflict(() -> booking.reschedule(owner, original.id(), new Reschedule(end, end.plusHours(1), "reschedule-conflict")));
+    assertThat(store.reservation(original.id()).status()).isEqualTo(Status.CONFIRMED);
+    assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservation_slot WHERE reservation_id=?", Integer.class, original.id())).isEqualTo(4);
+    assertThatThrownBy(() -> booking.reschedule(other, original.id(), new Reschedule(end, end.plusHours(1), "reschedule-forbidden"))).isInstanceOf(Problem.class);
+    long approvalEq = resource(true, false);
+    Reservation pending = booking.create(owner, input(approvalEq, start, end, "approval-initial"));
+    booking.decide(admin, pending.id(), new Decision(true, "批准"));
+    assertThat(booking.reschedule(owner, pending.id(), new Reschedule(end, end.plusHours(1), "approval-reschedule")).status())
+        .isEqualTo(Status.PENDING_APPROVAL);
+  }
+
+  @Test
+  void rescheduleRollbackRestoresOriginalSlots() {
+    Reservation original = create(owner);
+    var tx = new org.springframework.transaction.support.TransactionTemplate(
+        new org.springframework.jdbc.datasource.DataSourceTransactionManager(Objects.requireNonNull(jdbc.getDataSource())));
+    assertThatThrownBy(() -> tx.execute(s -> {
+      booking.reschedule(owner, original.id(), new Reschedule(end, end.plusHours(1), "rollback-reschedule"));
+      throw new IllegalStateException("forced rollback after replacement");
+    })).isInstanceOf(IllegalStateException.class);
+    assertThat(store.reservation(original.id()).status()).isEqualTo(Status.CONFIRMED);
+    assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservation", Integer.class)).isEqualTo(1);
+    assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservation_slot WHERE reservation_id=?", Integer.class, original.id())).isEqualTo(4);
   }
 
   @Autowired OutboxDelivery retryDelivery;
@@ -673,7 +762,7 @@ class BookingIntegrationTest {
     mvc.perform(get("/api/me").header("Authorization", "Bearer " + ownerToken))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.qualifications").isArray())
-        .andExpect(jsonPath("$.serverTime").value("2026-10-15T00:00:00"));
+        .andExpect(jsonPath("$.serverTime").value("2026-10-15T00:00:00Z"));
     mvc.perform(
             post("/api/reservations")
                 .header("Authorization", "Bearer " + ownerToken)

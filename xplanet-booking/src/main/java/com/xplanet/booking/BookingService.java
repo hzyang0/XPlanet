@@ -58,6 +58,8 @@ public class BookingService {
     if (e.trainingRequired() && !store.trained(actor.id(), e.id()))
       throw new Problem(403, "请先获得本设备的培训资格");
     maintain(e, now);
+    if (store.maintenanceOverlap(e.id(), input.startAt(), input.endAt()))
+      throw Problem.conflict("该时段设备维修停机，请选择其他时间");
     if (store.active(e.id()).stream()
         .anyMatch(r -> r.userId() == actor.id() && overlap(r, input.startAt(), input.endAt())))
       throw Problem.conflict("你在该设备已有重叠的预约或候补，请先处理原预约");
@@ -113,6 +115,95 @@ public class BookingService {
     change(r, Status.CANCELLED, null, actor.id(), "取消预约", now);
     maintain(e, now);
     return store.reservation(id);
+  }
+
+  public Reservation reschedule(Actor actor, long id, Reschedule input) {
+    store.lockUser(actor.id());
+    List<Map<String, Object>> replays = store.rows(
+        "SELECT * FROM reservation_reschedule WHERE user_id=? AND request_key=?", actor.id(), input.requestKey());
+    if (!replays.isEmpty()) {
+      Map<String, Object> replay = replays.get(0);
+      if (((Number) replay.get("source_id")).longValue() != id
+          || !input.startAt().equals(replay.get("start_at"))
+          || !input.endAt().equals(replay.get("end_at")))
+        throw Problem.conflict("同一改期标识不能用于不同操作");
+      return store.reservation(((Number) replay.get("replacement_id")).longValue());
+    }
+    Reservation old = lock(id);
+    if (old.userId() != actor.id()) throw new Problem(403, "只能为本人预约改期");
+    require(old, Status.CONFIRMED);
+    LocalDateTime now = now();
+    if (!old.startAt().isAfter(now)) throw Problem.conflict("已开始的预约不能改期");
+    validateTimes(input.startAt(), input.endAt(), now);
+    if (old.startAt().equals(input.startAt()) && old.endAt().equals(input.endAt()))
+      throw new Problem(400, "请选择与原预约不同的时间");
+    Equipment e = store.equipment(old.equipmentId(), false);
+    if (!e.enabled()) throw Problem.conflict("设备已停用");
+    if (e.trainingRequired() && !store.trained(actor.id(), e.id())) throw new Problem(403, "培训资格已失效");
+    if (store.byKey(actor.id(), input.requestKey()).isPresent()) throw Problem.conflict("改期标识已用于其他预约");
+    if (!store.slotsFreeExcept(e.id(), input.startAt(), input.endAt(), old.id())
+        || store.maintenanceOverlap(e.id(), input.startAt(), input.endAt())
+        || store.active(e.id()).stream().anyMatch(r -> r.id() != old.id()
+            && overlap(r, input.startAt(), input.endAt())))
+      throw Problem.conflict("目标时段有预约、候补或维修，原预约保持不变");
+    change(old, Status.CANCELLED, null, actor.id(), "改期：原预约取消", now);
+    Reservation replacement = create(actor, new CreateReservation(e.id(), input.startAt(), input.endAt(),
+        old.purpose(), input.requestKey()));
+    store.jdbc().update("INSERT INTO reservation_reschedule(user_id,request_key,source_id,replacement_id,"
+        + "start_at,end_at,created_at) VALUES(?,?,?,?,?,?,?)", actor.id(), input.requestKey(), old.id(),
+        replacement.id(), input.startAt(), input.endAt(), now);
+    return replacement;
+  }
+
+  public Map<String, Object> addBlock(Actor actor, long equipmentId, BlockInput input) {
+    actor.requireAdmin();
+    store.lockUser(actor.id());
+    List<Map<String, Object>> replay = store.rows(
+        "SELECT * FROM equipment_block WHERE created_by=? AND request_key=?", actor.id(), input.requestKey());
+    if (!replay.isEmpty()) {
+      Map<String, Object> b = replay.get(0);
+      if (((Number) b.get("equipment_id")).longValue() != equipmentId
+          || !input.startAt().equals(b.get("start_at")) || !input.endAt().equals(b.get("end_at"))
+          || !input.reason().trim().equals(b.get("reason"))) throw Problem.conflict("停机请求标识不能用于不同操作");
+      return b;
+    }
+    store.equipment(equipmentId, true);
+    LocalDateTime now = now();
+    if (input.startAt() == null || input.endAt() == null || !input.startAt().isAfter(now)
+        || !input.endAt().isAfter(input.startAt()) || input.endAt().isAfter(now.plusDays(horizonDays))
+        || Duration.between(input.startAt(), input.endAt()).compareTo(Duration.ofDays(7)) > 0)
+      throw new Problem(400, "维修时段须在未来30天内且不超过7天");
+    for (LocalDateTime t : List.of(input.startAt(), input.endAt()))
+      if (t.getMinute() % 30 != 0 || t.getSecond() != 0 || t.getNano() != 0)
+        throw new Problem(400, "维修起止须对齐整点或半点");
+    maintain(store.equipment(equipmentId, false), now);
+    if (store.active(equipmentId).stream().anyMatch(r -> overlap(r, input.startAt(), input.endAt()))
+        || store.maintenanceOverlap(equipmentId, input.startAt(), input.endAt()))
+      throw Problem.conflict("维修时段与已有预约、候补或停机冲突，请先协调处理");
+    long blockId = store.insert("INSERT INTO equipment_block(equipment_id,start_at,end_at,reason,request_key,"
+        + "created_by,created_at) VALUES(?,?,?,?,?,?,?)", equipmentId, input.startAt(), input.endAt(),
+        input.reason().trim(), input.requestKey(), actor.id(), now);
+    for (LocalDateTime t = input.startAt(); t.isBefore(input.endAt()); t = t.plusMinutes(30))
+      store.jdbc().update("INSERT INTO reservation_slot(equipment_id,slot_at,block_id) VALUES(?,?,?)", equipmentId, t, blockId);
+    equipmentAudit(equipmentId, actor.id(), "MAINTENANCE_CREATED", input.reason().trim(), now);
+    return store.rows("SELECT * FROM equipment_block WHERE id=?", blockId).get(0);
+  }
+
+  public void removeBlock(Actor actor, long blockId) {
+    actor.requireAdmin();
+    List<Map<String, Object>> rows = store.rows("SELECT equipment_id FROM equipment_block WHERE id=?", blockId);
+    if (rows.isEmpty()) throw new Problem(404, "维修记录不存在");
+    long equipmentId = ((Number) rows.get(0).get("equipment_id")).longValue();
+    store.equipment(equipmentId, true);
+    if (store.jdbc().update("UPDATE equipment_block SET active=FALSE WHERE id=? AND active=TRUE", blockId) == 0) return;
+    store.jdbc().update("DELETE FROM reservation_slot WHERE block_id=?", blockId);
+    equipmentAudit(equipmentId, actor.id(), "MAINTENANCE_CANCELLED", "取消维修停机 #" + blockId, now());
+    maintain(store.equipment(equipmentId, false), now());
+  }
+
+  private void equipmentAudit(long equipmentId, Long actorId, String action, String reason, LocalDateTime now) {
+    store.jdbc().update("INSERT INTO equipment_audit(equipment_id,actor_id,action,reason,created_at)"
+        + " VALUES(?,?,?,?,?)", equipmentId, actorId, action, reason, now);
   }
 
   public Reservation accept(Actor actor, long id) {
@@ -250,6 +341,13 @@ public class BookingService {
   }
 
   private void maintain(Equipment e, LocalDateTime now) {
+    for (Map<String, Object> block : store.rows(
+        "SELECT id FROM equipment_block WHERE equipment_id=? AND active=TRUE AND end_at<=?", e.id(), now)) {
+      long id = ((Number) block.get("id")).longValue();
+      store.jdbc().update("UPDATE equipment_block SET active=FALSE WHERE id=?", id);
+      store.jdbc().update("DELETE FROM reservation_slot WHERE block_id=?", id);
+      equipmentAudit(e.id(), null, "MAINTENANCE_ENDED", "维修时段结束 #" + id, now);
+    }
     for (Reservation r : store.active(e.id())) {
       if ((r.status() == Status.OFFERED || r.status() == Status.PENDING_APPROVAL)
           && !r.deadline().isAfter(now)) change(r, Status.EXPIRED, null, null, "限时确认或审批超时", now);
@@ -262,16 +360,21 @@ public class BookingService {
         change(r, Status.COMPLETED, null, null, "预约时段结束，自动完成", now);
     }
     if (!e.enabled()) return;
-    List<Reservation> blocked = new ArrayList<>();
+    NavigableMap<LocalDateTime, LocalDateTime> blocked = new TreeMap<>();
+    Set<LocalDateTime> occupied = store.occupiedSlots(e.id());
+    Set<Long> qualified = e.trainingRequired() ? store.trainedUsers(e.id()) : Set.of();
     for (Reservation r : store.active(e.id())) {
       if (r.status() != Status.WAITLISTED) continue;
-      if (e.trainingRequired() && !store.trained(r.userId(), e.id())) {
+      if (e.trainingRequired() && !qualified.contains(r.userId())) {
         change(r, Status.REJECTED, null, null, "培训资格失效", now);
         continue;
       }
-      if (blocked.stream().noneMatch(b -> overlap(b, r.startAt(), r.endAt()))
-          && store.slotsFree(e.id(), r.startAt(), r.endAt())) {
+      boolean free = true;
+      for (LocalDateTime t = r.startAt(); t.isBefore(r.endAt()); t = t.plusMinutes(30))
+        if (occupied.contains(t)) { free = false; break; }
+      if (!blockedOverlap(blocked, r.startAt(), r.endAt()) && free) {
         store.allocate(r);
+        for (LocalDateTime t = r.startAt(); t.isBefore(r.endAt()); t = t.plusMinutes(30)) occupied.add(t);
         change(
             r,
             Status.OFFERED,
@@ -279,8 +382,30 @@ public class BookingService {
             null,
             "候补获得限时确认资格",
             now);
-      } else blocked.add(r);
+      } else mergeBlocked(blocked, r.startAt(), r.endAt());
     }
+  }
+
+  private boolean blockedOverlap(NavigableMap<LocalDateTime, LocalDateTime> ranges, LocalDateTime start, LocalDateTime end) {
+    var before = ranges.floorEntry(start);
+    var after = ranges.ceilingEntry(start);
+    return (before != null && before.getValue().isAfter(start)) || (after != null && after.getKey().isBefore(end));
+  }
+
+  private void mergeBlocked(NavigableMap<LocalDateTime, LocalDateTime> ranges, LocalDateTime start, LocalDateTime end) {
+    var before = ranges.floorEntry(start);
+    if (before != null && !before.getValue().isBefore(start)) {
+      start = before.getKey();
+      if (before.getValue().isAfter(end)) end = before.getValue();
+      ranges.remove(before.getKey());
+    }
+    var next = ranges.ceilingEntry(start);
+    while (next != null && !next.getKey().isAfter(end)) {
+      if (next.getValue().isAfter(end)) end = next.getValue();
+      ranges.remove(next.getKey());
+      next = ranges.ceilingEntry(start);
+    }
+    ranges.put(start, end);
   }
 
   private Reservation lock(long id) {

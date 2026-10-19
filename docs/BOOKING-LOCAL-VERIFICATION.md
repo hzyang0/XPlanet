@@ -1,45 +1,64 @@
-# 本地同步与复验记录
+# 当前本机验证报告
 
-日期：2026-10-19。此文件只记录本轮 Windows 本机操作；交付包原有的云端 H2/MariaDB、双实例及浏览器报告仍在 [BOOKING-VALIDATION.md](BOOKING-VALIDATION.md)。
+日期：2026-10-19。环境为 Windows 11、Temurin Java17.0.19、Maven3.9.8、Docker Desktop，MySQL8.4容器运行于独立的临时测试环境。
 
-## 同步范围
+## 最新结果
 
-- 从桌面 `XPlanet-Booking-Final.zip` 导入独立 `xplanet-booking` 模块、预约相关文档、验证脚本和 Docker 配置。
-- 模块导入后逐文件 SHA-256 比对无差异。归档中的预编译 JAR 哈希与 RELEASE.json 一致；Git 仅提交源码，运行 JAR 在本地重新构建。
-- `main` 只保留预约项目；移除该分支的旧社区代码与旧文档。秒杀和 optimization 分支不变，旧社区仍可从 Git 历史查看。
-- 新增根 Maven 聚合入口、Windows/Linux 启动入口、环境变量样例及项目评估文档，更新项目开发地图。
-- 本轮未批量改变预约业务规则；检查发现的缺口与后续方案见 [项目评估](BOOKING-PROJECT-REVIEW.md)。
-- 来源与哈希记录在 [import-manifest.json](validation/import-manifest.json)。
-
-## 本机执行结果
-
-环境：Windows 11 amd64，Temurin Java 17.0.19，Maven 3.9.8；模块 Maven Wrapper 可正常下载并运行 Maven 3.9.9。
-
-| 项目 | 本轮结果 |
+| 验证项 | 结果 |
 | --- | --- |
-| 根目录 `mvn -B clean verify` | 35 项 H2 集成测试，0 失败、0 错误、0 跳过；JAR 打包成功 |
-| 根目录 `START-WINDOWS.bat` | 正常启动，同源工作台和 `/actuator/health` 可访问 |
-| `booking_e2e.py --users 32` | 单实例 32 用户：1 确认、31 候补、32 次重放复用原预约；FIFO 补位与越权 403 通过 |
-| `booking_recovery.py` | 使用独立临时 H2 文件，强制终止进程并实际等待 1 分钟审批期限；重启后审批过期、候补 OFFERED、通知、会话和幂等重放通过 |
-| Playwright + Edge | 真实浏览器登录、选择时段、提交预约、查看确认记录、审计、取消成功；390×844 视口检查没有横向溢出。favicon 500 单独记录为待修问题 |
-| Compose 配置 | 使用占位环境变量执行 `config --quiet` 通过；未启动容器 |
+| H2集成测试 | 47项，0失败、0错误 |
+| MySQL8.4集成测试 | 相同47项，0失败、0错误；V1/V2/V3迁移通过 |
+| 已有H2文件升级 | 原V1数据库启动后自动应用V2/V3，无需清空数据 |
+| 真实双JVM共享MySQL | 32用户：1确认、31候补，32次幂等重放、FIFO递补与归属403通过 |
+| 热点设备负载 | 两实例、8个客户端、1台设备，30秒创建/重放/取消循环；无错误、无残留时隙 |
+| 分散设备负载 | 两实例、8个客户端、8台设备，同样30秒循环；无错误、无残留时隙 |
+| 数据库核验 | 终态残留时隙0，错误时隙归属0，重复通知0，待投递事件最终0 |
+| Playwright+Edge | 登录、改期、取消、维修安排、停机日历、取消维修、运行概览与390×844布局通过，JS错误0 |
+| 强制终止与恢复 | 最新版本实际等待一分钟审批期限，恢复会话、审批过期、候补OFFERED、通知及幂等重放通过 |
 
-结构化本机记录：[local-windows-20261019.json](validation/local-windows-20261019.json)。
+原始负载数据：[热点设备](validation/load-hot-20261019.json)、[分散设备](validation/load-distributed-20261019.json)。两组测试还包含取消和部分重放，因此其中的提交请求速率不能当作接口极限QPS，也不是长时间稳定性结果。场景和环境不同，不与最初云端延迟数字直接比较。
 
-HTTP 批次耗时 0.237 秒，P50 71.26 ms，P95 131.79 ms。这是本机单实例短时正确性样本，不能与包内云端双实例样本直接对比性能，也不是持续吞吐指标。
+结构化本轮结果见 [current-20261019.json](validation/current-20261019.json)。最初包内云端35项H2/MariaDB及恢复记录仍见 [历史云端验证](BOOKING-VALIDATION.md)；[首次导入的35项本机记录](validation/local-windows-20261019.json)仅为历史基线，不能当作当前测试总数。本轮没有重跑MariaDB。
 
-## 未在本机重跑的范围
+## 可复现命令
 
-Docker Desktop 引擎未运行，本轮没有重跑 MySQL/MariaDB、共享外部数据库的双 JVM 并发验证；不能把历史云端报告当成本机结果。长期稳定性、容量压测、设备硬件联动和真实用户试用也未执行。
+```powershell
+mvn clean verify
+.\START-WINDOWS.bat
+```
 
-## 已复现的待修问题
+外部数据库测试只连接独立测试库，现有测试会删除业务表：
 
-缺少 from/to 调用时段查询接口得到 500，预期应为参数错误；缺失的 `/favicon.ico` 也得到 500。原模块 `ApiErrors` 的通用异常映射需要完善。本轮保留交付模块源码并记录问题，没有将它们算作“所有功能完全无误”。优化建议见项目评估文档。
+```powershell
+$env:TEST_DB_URL='jdbc:mysql://127.0.0.1:3306/booking_test?allowPublicKeyRetrieval=true&useSSL=false&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true'
+$env:TEST_DB_USER='booking'
+$env:TEST_DB_PASSWORD='<测试库密码>'
+mvn -f xplanet-booking/pom.xml test
+```
 
-## 使用方式
+共享数据库的两个实例健康后：
 
-双击仓库根目录 `START-WINDOWS.bat`，首次构建需要联网。访问 `http://localhost:8080`。
-演示用户为 `alice / password123`，管理员为 `admin / admin12345`。
-数据保存于启动目录 `data/`，已排除在 Git 外。修改源码后执行 `mvn clean verify` 更新 JAR，再重启应用。
+```powershell
+$env:ADMIN_PASSWORD='<管理员密码>'
+python scripts/booking_e2e.py --base-url http://127.0.0.1:18082 --second-url http://127.0.0.1:18083 --users 32
+python scripts/booking_load.py --base-url http://127.0.0.1:18082 --second-url http://127.0.0.1:18083 --seconds 30 --workers 8 --resources 1
+python scripts/booking_load.py --base-url http://127.0.0.1:18082 --second-url http://127.0.0.1:18083 --seconds 30 --workers 8 --resources 8
+python scripts/booking_recovery.py
+```
 
-独立测试库中的集成测试会清空业务表；不要给 TEST_DB_URL 配置实际使用的数据库。
+负载脚本创建独立前缀的用户和设备，结束时取消预约并停用测试设备；请只在隔离验证库运行。
+
+浏览器使用demo环境，默认账号只用于本地体验：
+
+```powershell
+npx --yes --package @playwright/cli playwright-cli -s=booking open http://127.0.0.1:8080 --browser msedge
+npx --yes --package @playwright/cli playwright-cli -s=booking snapshot
+npx --yes --package @playwright/cli playwright-cli -s=booking run-code --filename scripts/booking_browser_check.js
+npx --yes --package @playwright/cli playwright-cli -s=booking close
+```
+
+## 代码与本地目录
+
+main只包含预约平台。本地旧环境、临时浏览器记录与无关PDF已清理，本地和远端秒杀分支已删除。optimization分支保留。Git不提交数据文件、JAR、密码和浏览器运行缓存。
+
+源码最初来自交付包，哈希来源见 [import-manifest.json](validation/import-manifest.json)。之后的代码修复、功能与迁移均已进入Git提交；不再声称当前源码与原始包逐字相同。

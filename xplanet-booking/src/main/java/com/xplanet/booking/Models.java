@@ -93,4 +93,15 @@ public final class Models {
   public record Decision(boolean approve, @NotBlank @Size(max = 300) String reason) {}
 
   public record Training(@Positive long userId, boolean granted) {}
+
+  public record Reschedule(
+      @NotNull LocalDateTime startAt,
+      @NotNull LocalDateTime endAt,
+      @NotBlank @Pattern(regexp = "[A-Za-z0-9_-]{8,64}") String requestKey) {}
+
+  public record BlockInput(
+      @NotNull LocalDateTime startAt,
+      @NotNull LocalDateTime endAt,
+      @NotBlank @Size(max = 300) String reason,
+      @NotBlank @Pattern(regexp = "[A-Za-z0-9_-]{8,64}") String requestKey) {}
 }

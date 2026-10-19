@@ -110,17 +110,14 @@ public class Store {
         offset);
   }
 
-  List<Long> equipmentIds() {
-    return jdbc.queryForList("SELECT id FROM equipment ORDER BY id", Long.class);
-  }
-
   List<Long> dueEquipment(long afterId, int limit, LocalDateTime now, int noShowMinutes) {
     return jdbc.queryForList(
         "SELECT DISTINCT equipment_id FROM reservation WHERE equipment_id>? AND (status='WAITLISTED'"
             + " OR (status IN ('OFFERED','PENDING_APPROVAL') AND deadline<=?)"
             + " OR (status='CONFIRMED' AND start_at<=?) OR (status='IN_USE' AND end_at<=?))"
+            + " UNION SELECT equipment_id FROM equipment_block WHERE equipment_id>? AND active=TRUE AND end_at<=?"
             + " ORDER BY equipment_id LIMIT ?", Long.class, afterId, now,
-        now.minusMinutes(noShowMinutes), now, limit);
+        now.minusMinutes(noShowMinutes), now, afterId, now, limit);
   }
 
   Reservation reservation(long id) {
@@ -181,6 +178,26 @@ public class Store {
             start,
             end)
         == 0;
+  }
+
+  Set<LocalDateTime> occupiedSlots(long equipmentId) {
+    return new HashSet<>(jdbc.query("SELECT slot_at FROM reservation_slot WHERE equipment_id=?",
+        (r, n) -> time(r, "slot_at"), equipmentId));
+  }
+
+  Set<Long> trainedUsers(long equipmentId) {
+    return new HashSet<>(jdbc.queryForList("SELECT user_id FROM qualification WHERE equipment_id=?", Long.class, equipmentId));
+  }
+
+  boolean slotsFreeExcept(long equipmentId, LocalDateTime start, LocalDateTime end, long reservationId) {
+    return jdbc.queryForObject("SELECT COUNT(*) FROM reservation_slot WHERE equipment_id=? AND slot_at>=?"
+        + " AND slot_at<? AND (reservation_id IS NULL OR reservation_id<>?)", Integer.class,
+        equipmentId, start, end, reservationId) == 0;
+  }
+
+  boolean maintenanceOverlap(long equipmentId, LocalDateTime start, LocalDateTime end) {
+    return jdbc.queryForObject("SELECT COUNT(*) FROM equipment_block WHERE equipment_id=? AND active=TRUE"
+        + " AND start_at<? AND end_at>?", Integer.class, equipmentId, end, start) > 0;
   }
 
   void allocate(Reservation r) {

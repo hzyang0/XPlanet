@@ -77,7 +77,8 @@ public class ApiController {
     if (!to.isAfter(from) || Duration.between(from, to).compareTo(Duration.ofDays(7)) > 0)
       throw new Problem(400, "查询范围必须为 0～7 天");
     return store.rows(
-        "SELECT slot_at FROM reservation_slot WHERE equipment_id=? AND slot_at>=? AND slot_at<?"
+        "SELECT slot_at,CASE WHEN block_id IS NULL THEN 'RESERVATION' ELSE 'MAINTENANCE' END AS kind"
+            + " FROM reservation_slot WHERE equipment_id=? AND slot_at>=? AND slot_at<?"
             + " ORDER BY slot_at",
         id,
         from,
@@ -131,6 +132,34 @@ public class ApiController {
   @PostMapping("/reservations/{id}/cancel")
   public Reservation cancel(@AuthenticationPrincipal Actor actor, @PathVariable long id) {
     return booking.cancel(actor, id);
+  }
+
+  @PostMapping("/reservations/{id}/reschedule")
+  public Reservation reschedule(@AuthenticationPrincipal Actor actor, @PathVariable long id,
+      @Valid @RequestBody Reschedule input) {
+    return booking.reschedule(actor, id, input);
+  }
+
+  @GetMapping("/equipment/{id}/blocks")
+  public List<Map<String, Object>> blocks(@PathVariable long id,
+      @RequestParam LocalDateTime from, @RequestParam LocalDateTime to) {
+    store.equipment(id, false);
+    if (!to.isAfter(from) || Duration.between(from, to).compareTo(Duration.ofDays(31)) > 0)
+      throw new Problem(400, "维修查询范围须在31天内");
+    return store.rows("SELECT id,equipment_id,start_at,end_at,reason FROM equipment_block WHERE equipment_id=?"
+        + " AND active=TRUE AND start_at<? AND end_at>? ORDER BY start_at LIMIT 100", id, to, from);
+  }
+
+  @PostMapping("/equipment/{id}/blocks")
+  public Map<String, Object> addBlock(@AuthenticationPrincipal Actor actor, @PathVariable long id,
+      @Valid @RequestBody BlockInput input) {
+    return booking.addBlock(actor, id, input);
+  }
+
+  @DeleteMapping("/equipment/blocks/{blockId}")
+  public Map<String, Boolean> removeBlock(@AuthenticationPrincipal Actor actor, @PathVariable long blockId) {
+    booking.removeBlock(actor, blockId);
+    return Map.of("ok", true);
   }
 
   @PostMapping("/reservations/{id}/accept")

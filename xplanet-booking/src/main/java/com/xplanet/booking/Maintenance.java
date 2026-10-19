@@ -65,13 +65,17 @@ public class Maintenance {
         log.error("Equipment maintenance failed: {}", id, e);
       }
     }
+    metrics.timer("booking.maintenance.duration").record(System.nanoTime() - began, java.util.concurrent.TimeUnit.NANOSECONDS);
+  }
+
+  @Scheduled(fixedDelayString = "${booking.outbox-delay-ms:500}")
+  public void dispatchNotifications() {
     try {
       metrics.counter("booking.notifications.delivered").increment(dispatcher.dispatch());
     } catch (Exception e) {
       metrics.counter("booking.outbox.failures").increment();
       log.error("Inbox dispatch failed", e);
     }
-    metrics.timer("booking.maintenance.duration").record(System.nanoTime() - began, java.util.concurrent.TimeUnit.NANOSECONDS);
   }
 
   @Scheduled(fixedDelay = 3600000)
