@@ -2,8 +2,9 @@ package com.xplanet.booking;
 
 import java.time.*;
 import java.util.*;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.slf4j.*;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.*;
 
 /**
  * Durable local inbox transport. Business + event are atomic; inbox + acknowledgement are atomic.
@@ -12,42 +13,32 @@ import org.springframework.transaction.annotation.*;
 public class OutboxDispatcher {
   private final Store store;
   private final Clock clock;
+  private final OutboxDelivery delivery;
+  private final MeterRegistry metrics;
+  private static final Logger log = LoggerFactory.getLogger(OutboxDispatcher.class);
 
-  public OutboxDispatcher(Store store, Clock clock) {
+  public OutboxDispatcher(Store store, Clock clock, OutboxDelivery delivery, MeterRegistry metrics) {
     this.store = store;
     this.clock = clock;
+    this.delivery = delivery;
+    this.metrics = metrics;
   }
 
-  @Transactional(isolation = Isolation.READ_COMMITTED)
   public int dispatch() {
-    List<Map<String, Object>> events =
-        store
-            .jdbc()
-            .queryForList(
-                "SELECT * FROM event_outbox WHERE delivered_at IS NULL ORDER BY id LIMIT 100 FOR"
-                    + " UPDATE");
-    for (Map<String, Object> e : events) {
-      long id = ((Number) e.get("id")).longValue();
-      if (store
-              .jdbc()
-              .queryForObject(
-                  "SELECT COUNT(*) FROM inbox_notification WHERE event_id=?", Integer.class, id)
-          == 0)
-        store
-            .jdbc()
-            .update(
-                "INSERT INTO inbox_notification(event_id,user_id,reservation_id,message,created_at)"
-                    + " VALUES(?,?,?,?,?)",
-                id,
-                e.get("user_id"),
-                e.get("reservation_id"),
-                e.get("message"),
-                LocalDateTime.now(clock));
-      store
-          .jdbc()
-          .update(
-              "UPDATE event_outbox SET delivered_at=? WHERE id=?", LocalDateTime.now(clock), id);
+    List<Long> events = store.jdbc().queryForList(
+        "SELECT id FROM event_outbox WHERE delivered_at IS NULL AND failed_at IS NULL"
+            + " AND (next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY id LIMIT 100",
+        Long.class, LocalDateTime.now(clock));
+    int delivered = 0;
+    for (long id : events) {
+      try {
+        if (delivery.deliver(id)) delivered++;
+      } catch (RuntimeException e) {
+        metrics.counter("booking.outbox.failures").increment();
+        log.warn("Notification delivery failed for event {} ({})", id, e.getClass().getSimpleName());
+        delivery.recordFailure(id, e.getClass().getSimpleName());
+      }
     }
-    return events.size();
+    return delivered;
   }
 }

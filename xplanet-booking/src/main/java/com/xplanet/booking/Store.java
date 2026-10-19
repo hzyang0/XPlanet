@@ -114,6 +114,15 @@ public class Store {
     return jdbc.queryForList("SELECT id FROM equipment ORDER BY id", Long.class);
   }
 
+  List<Long> dueEquipment(long afterId, int limit, LocalDateTime now, int noShowMinutes) {
+    return jdbc.queryForList(
+        "SELECT DISTINCT equipment_id FROM reservation WHERE equipment_id>? AND (status='WAITLISTED'"
+            + " OR (status IN ('OFFERED','PENDING_APPROVAL') AND deadline<=?)"
+            + " OR (status='CONFIRMED' AND start_at<=?) OR (status='IN_USE' AND end_at<=?))"
+            + " ORDER BY equipment_id LIMIT ?", Long.class, afterId, now,
+        now.minusMinutes(noShowMinutes), now, limit);
+  }
+
   Reservation reservation(long id) {
     return jdbc.query("SELECT * FROM reservation WHERE id=?", reservationMapper, id).stream()
         .findFirst()

@@ -96,6 +96,7 @@ class BookingIntegrationTest {
     clock.at(LocalDateTime.of(2026, 10, 15, 0, 0));
     for (String table :
         List.of(
+            "event_retry_audit",
             "inbox_notification",
             "event_outbox",
             "reservation_audit",
@@ -514,6 +515,60 @@ class BookingIntegrationTest {
         .isNotEqualTo(s.token());
     auth.logout(s.token());
     assertThat(auth.resolve(s.token())).isEmpty();
+  }
+
+  @Test
+  void poisonEventDoesNotBlockOtherNotificationsAndCanBeRetried() {
+    create(owner);
+    create(other);
+    long eventId = jdbc.queryForObject("SELECT MIN(id) FROM event_outbox", Long.class);
+    jdbc.update("UPDATE event_outbox SET message='poison' WHERE id=?", eventId);
+    jdbc.execute("ALTER TABLE inbox_notification ADD CONSTRAINT test_reject_poison CHECK (message <> 'poison')");
+    try {
+      assertThat(outbox.dispatch()).isEqualTo(1);
+      assertThat(jdbc.queryForObject("SELECT retry_count FROM event_outbox WHERE id=?", Integer.class, eventId)).isEqualTo(1);
+      assertThat(outbox.dispatch()).isZero();
+      for (int i = 0; i < 4; i++) {
+        clock.advance(Duration.ofMinutes(6));
+        assertThat(outbox.dispatch()).isZero();
+      }
+      assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM event_outbox WHERE failed_at IS NOT NULL", Integer.class)).isEqualTo(1);
+      clock.advance(Duration.ofHours(1));
+      assertThat(outbox.dispatch()).isZero();
+    } finally {
+      jdbc.execute("ALTER TABLE inbox_notification DROP CONSTRAINT test_reject_poison");
+    }
+    assertThatThrownBy(() -> retryDelivery.retry(other, eventId)).isInstanceOf(Problem.class);
+    retryDelivery.retry(admin, eventId);
+    assertThat(outbox.dispatch()).isEqualTo(1);
+    assertThat(outbox.dispatch()).isZero();
+    assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM inbox_notification", Integer.class)).isEqualTo(2);
+    assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM event_retry_audit", Integer.class)).isEqualTo(1);
+  }
+
+  @Autowired OutboxDelivery retryDelivery;
+
+  @Test
+  void maintenanceCandidatesSkipIdleEquipmentAndUseCursor() {
+    create(owner);
+    create(other);
+    long secondEquipment = resource(false, false);
+    booking.create(owner, input(secondEquipment, start, end, "maintenance-holder"));
+    booking.create(other, input(secondEquipment, start, end, "maintenance-waiter"));
+    for (int i = 0; i < 20; i++) resource(false, false);
+    assertThat(store.dueEquipment(0, 1, LocalDateTime.now(clock), 15)).containsExactly(equipment);
+    assertThat(store.dueEquipment(equipment, 1, LocalDateTime.now(clock), 15)).containsExactly(secondEquipment);
+    assertThat(store.dueEquipment(secondEquipment, 1, LocalDateTime.now(clock), 15)).isEmpty();
+  }
+
+  @Test
+  void operationalEndpointsRequireAdmin() throws Exception {
+    String userToken = auth.login(new Login("owner", "password123")).token();
+    String adminToken = auth.login(new Login("admin", "password123")).token();
+    mvc.perform(get("/api/admin/operations").header("Authorization", "Bearer " + userToken))
+        .andExpect(status().isForbidden());
+    mvc.perform(get("/api/admin/operations").header("Authorization", "Bearer " + adminToken))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.failedEvents").value(0));
   }
 
   @Test

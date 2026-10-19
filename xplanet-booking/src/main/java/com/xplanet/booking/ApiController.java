@@ -6,6 +6,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.time.*;
 import java.util.*;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -18,12 +19,17 @@ public class ApiController {
   private final Store store;
   private final BookingService booking;
   private final Clock clock;
+  private final OutboxDelivery delivery;
+  private final MeterRegistry metrics;
 
-  public ApiController(AuthService auth, Store store, BookingService booking, Clock clock) {
+  public ApiController(AuthService auth, Store store, BookingService booking, Clock clock,
+      OutboxDelivery delivery, MeterRegistry metrics) {
     this.auth = auth;
     this.store = store;
     this.booking = booking;
     this.clock = clock;
+    this.delivery = delivery;
+    this.metrics = metrics;
   }
 
   @PostMapping("/auth/login")
@@ -210,5 +216,34 @@ public class ApiController {
                 "SELECT COUNT(*) FROM event_outbox WHERE delivered_at IS NULL", Long.class),
         "activeSlots",
         store.jdbc().queryForObject("SELECT COUNT(*) FROM reservation_slot", Long.class));
+  }
+
+  @GetMapping("/admin/operations")
+  public Map<String, Object> operations(@AuthenticationPrincipal Actor actor) {
+    actor.requireAdmin();
+    LocalDateTime oldest = store.jdbc().query("SELECT MIN(created_at) AS oldest_at FROM event_outbox"
+        + " WHERE delivered_at IS NULL AND failed_at IS NULL", r -> r.next() ? Store.time(r, "oldest_at") : null);
+    var timer = metrics.find("booking.maintenance.duration").timer();
+    var failures = metrics.find("booking.maintenance.failures").counter();
+    return Map.of(
+        "failedEvents", store.jdbc().queryForObject("SELECT COUNT(*) FROM event_outbox WHERE failed_at IS NOT NULL", Long.class),
+        "pendingEvents", store.jdbc().queryForObject("SELECT COUNT(*) FROM event_outbox WHERE delivered_at IS NULL AND failed_at IS NULL", Long.class),
+        "oldestPendingSeconds", oldest == null ? 0 : Math.max(0, Duration.between(oldest, LocalDateTime.now(clock)).getSeconds()),
+        "maintenanceRuns", timer == null ? 0 : timer.count(),
+        "maintenanceLastMaxMs", timer == null ? 0 : timer.max(java.util.concurrent.TimeUnit.MILLISECONDS),
+        "maintenanceFailures", failures == null ? 0 : failures.count());
+  }
+
+  @GetMapping("/admin/events")
+  public List<Map<String, Object>> failedEvents(@AuthenticationPrincipal Actor actor) {
+    actor.requireAdmin();
+    return store.rows("SELECT id,reservation_id,retry_count,last_error,failed_at FROM event_outbox"
+        + " WHERE failed_at IS NOT NULL ORDER BY id LIMIT 100");
+  }
+
+  @PostMapping("/admin/events/{id}/retry")
+  public Map<String, Boolean> retryEvent(@AuthenticationPrincipal Actor actor, @PathVariable long id) {
+    delivery.retry(actor, id);
+    return Map.of("ok", true);
   }
 }
