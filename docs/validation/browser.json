@@ -1,0 +1,13 @@
+{
+  "desktop": "1440x1000",
+  "mobile": "390x844",
+  "login": "passed",
+  "reservation_and_cancel": "passed",
+  "audit": "passed",
+  "create_equipment": "passed",
+  "grant_training": "passed",
+  "approval": "passed",
+  "xss_text_rendering": "passed",
+  "mobile_overflow": false,
+  "javascript_errors": []
+}

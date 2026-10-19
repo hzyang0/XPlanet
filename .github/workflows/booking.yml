@@ -1,0 +1,40 @@
+name: Booking verification
+on:
+  push:
+    paths: ['xplanet-booking/**', 'scripts/booking_e2e.py', '.github/workflows/booking.yml']
+  pull_request:
+    paths: ['xplanet-booking/**', 'scripts/booking_e2e.py', '.github/workflows/booking.yml']
+permissions:
+  contents: read
+jobs:
+  database-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        database: ['mysql:8.4', 'mariadb:10.11']
+    services:
+      database:
+        image: ${{ matrix.database }}
+        env:
+          MYSQL_ROOT_PASSWORD: ci-password
+          MYSQL_DATABASE: booking_test
+          MYSQL_ROOT_HOST: '%'
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -pci-password || mariadb-admin ping -pci-password"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: H2 tests
+        run: mvn -B -f xplanet-booking/pom.xml clean verify
+      - name: MySQL-compatible database tests
+        env:
+          TEST_DB_URL: jdbc:mysql://127.0.0.1:3306/booking_test?allowPublicKeyRetrieval=true&useSSL=false&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true
+          TEST_DB_USER: root
+          TEST_DB_PASSWORD: ci-password
+        run: mvn -B -f xplanet-booking/pom.xml verify

@@ -1,0 +1,11 @@
+{
+  "imported_on": "2026-10-19",
+  "archive_name": "XPlanet-Booking-Final.zip",
+  "archive_sha256": "0f5ccff0d2043f0a8bac989c04018bb254384e9731226f5e55cb56a3e52acc74",
+  "archive_source_commit_label": "5b4c54c3240605f2a17fc45b799be15ee8f31088",
+  "archive_base_commit_label": "e303a4b3aed0e0f2f7b901eba797e729ed70a21c",
+  "delivered_jar_sha256": "ea666cbf3c4d7fcfd134291e0d13ed00828c6789bd1270f3043f5c002b1a83d7",
+  "import_scope": "booking module, booking documentation and verification scripts, booking deployment configuration",
+  "excluded": "legacy community and seckill modules, old documentation, changes.patch and prebuilt JAR",
+  "note": "Source commit values are labels supplied by the archive, not imported Git objects. Historical cloud records remain separate from fresh Windows results."
+}

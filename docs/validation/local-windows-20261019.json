@@ -1,0 +1,44 @@
+{
+  "date": "2026-10-19",
+  "environment": {
+    "os": "Windows 11 amd64",
+    "java": "Eclipse Temurin 17.0.19",
+    "maven": "3.9.8",
+    "maven_wrapper": "3.9.9",
+    "database": "H2 2.3"
+  },
+  "integration_tests": {"tests": 35, "failures": 0, "errors": 0, "skipped": 0},
+  "windows_launcher": "passed, root START-WINDOWS.bat using locally built JAR",
+  "http_concurrency": {
+    "users": 32,
+    "instances": 1,
+    "confirmed": 1,
+    "waitlisted": 31,
+    "idempotent_replays": 32,
+    "fifo_promotion": "passed",
+    "ownership_check": "passed",
+    "occupied_slots": 2,
+    "submission_batch_seconds": 0.237,
+    "latency_p50_ms": 71.26,
+    "latency_p95_ms": 131.79,
+    "note": "Short correctness sample, not a throughput benchmark."
+  },
+  "h2_file_recovery": {
+    "hard_kill": "passed",
+    "real_deadline": "passed",
+    "session_persistence": "passed",
+    "approval_expiry": "EXPIRED",
+    "waiter": "OFFERED",
+    "notification_recovery": "passed",
+    "idempotent_replay": "passed"
+  },
+  "compose_config": "passed with disposable placeholder environment values",
+  "browser": {
+    "engine": "Microsoft Edge through Playwright CLI",
+    "checks": ["login", "select time range", "submit reservation", "confirmed record", "audit", "cancel"],
+    "mobile_viewport": "390x844",
+    "known_failure": "Missing favicon returns HTTP 500"
+  },
+  "not_reexecuted": ["MySQL", "MariaDB", "two independent JVM instances sharing an external database", "sustained load test"],
+  "reason": "Docker Desktop engine was not running; historical cloud results are preserved separately."
+}

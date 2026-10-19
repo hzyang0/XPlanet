@@ -1,35 +1,36 @@
-# Maven
+# Build and local runtime
 target/
 *.class
 *.jar
 !.mvn/wrapper/maven-wrapper.jar
+data/
+*.mv.db
+*.trace.db
+logs/
+*.log
+hs_err_pid*
+__pycache__/
+*.pyc
+.venv/
+.playwright-cli/
+docs/screenshots/
 
-# IDE
+# Local secrets and infrastructure data
+.env
+.env.local
+*.local.yml
+*.local.properties
+application-local.yml
+docker/booking.env
+docker/data/
+
+# IDE and operating system
 .idea/
 *.iml
 .vscode/
 .project
 .classpath
 .settings/
-*.swp
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Logs
-logs/
-*.log
-hs_err_pid*
-
-# 本地配置 / 敏感
-*.local.yml
-*.local.properties
-application-local.yml
-.env
-.env.local
-
-# Docker volumes
-docker/data/
-
-# Benchmark 结果保留模板,具体结果可选择性提交
+*.swp

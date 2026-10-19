@@ -1,0 +1,12 @@
+{
+  "process_kill": "SIGKILL",
+  "real_deadline_wait": true,
+  "approval_after_restart": "EXPIRED",
+  "waiter_after_restart": "OFFERED",
+  "persisted_login": "passed",
+  "idempotent_replay": "passed",
+  "notification_recovery": "passed",
+  "orphan_slots": 0,
+  "duplicate_slots": 0,
+  "pending_outbox": 0
+}

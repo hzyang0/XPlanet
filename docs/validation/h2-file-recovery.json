@@ -1,0 +1,9 @@
+{
+  "hard_kill": "passed",
+  "real_deadline": "passed",
+  "session_persistence": "passed",
+  "approval_expiry": "EXPIRED",
+  "waiter": "OFFERED",
+  "notification_recovery": "passed",
+  "idempotent_replay": "passed"
+}

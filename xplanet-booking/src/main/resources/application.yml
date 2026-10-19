@@ -1,0 +1,35 @@
+server:
+  port: ${PORT:8080}
+  error:
+    include-message: never
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:h2:file:./data/booking;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_ON_EXIT=FALSE;WRITE_DELAY=0}
+    username: ${DB_USER:sa}
+    password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 16
+      connection-timeout: 5000
+  jackson:
+    time-zone: UTC
+  sql:
+    init:
+      mode: never
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+booking:
+  seed-demo: ${SEED_DEMO:false}
+  admin-password: ${ADMIN_PASSWORD:}
+  scheduler-enabled: ${SCHEDULER_ENABLED:true}
+  scheduler-delay-ms: 5000
+  offer-minutes: 10
+  approval-minutes: 30
+  no-show-minutes: 15
+  check-in-early-minutes: 10
+  horizon-days: 30
