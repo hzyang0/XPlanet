@@ -92,6 +92,11 @@ public class Store {
         .orElseThrow(() -> new Problem(404, "设备不存在"));
   }
 
+  void lockUser(long userId) {
+    if (jdbc.queryForList("SELECT id FROM app_user WHERE id=? FOR UPDATE", Long.class, userId)
+        .isEmpty()) throw new Problem(404, "用户不存在");
+  }
+
   List<Equipment> equipmentList(String query, int limit, int offset) {
     String like = "%" + query.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%";
     return jdbc.query(

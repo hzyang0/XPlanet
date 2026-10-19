@@ -28,6 +28,7 @@ public class SecurityConfig {
                         "/app.js",
                         "/app.css",
                         "/favicon.ico",
+                        "/favicon.svg",
                         "/actuator/health",
                         "/api/auth/login",
                         "/api/auth/register")

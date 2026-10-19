@@ -68,7 +68,7 @@ public class ApiController {
   public List<Map<String, Object>> schedule(
       @PathVariable long id, @RequestParam LocalDateTime from, @RequestParam LocalDateTime to) {
     store.equipment(id, false);
-    if (!to.isAfter(from) || Duration.between(from, to).toHours() > 168)
+    if (!to.isAfter(from) || Duration.between(from, to).compareTo(Duration.ofDays(7)) > 0)
       throw new Problem(400, "查询范围必须为 0～7 天");
     return store.rows(
         "SELECT slot_at FROM reservation_slot WHERE equipment_id=? AND slot_at>=? AND slot_at<?"

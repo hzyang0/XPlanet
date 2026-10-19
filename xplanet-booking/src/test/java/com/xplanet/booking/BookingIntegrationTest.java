@@ -183,6 +183,58 @@ class BookingIntegrationTest {
   }
 
   @Test
+  void userQuotaIsAtomicAcrossDifferentEquipment() throws Exception {
+    for (int i = 0; i < 49; i++)
+      booking.create(owner, input(equipment, start.plusMinutes(i * 30L),
+          start.plusMinutes((i + 1) * 30L), "quota-seed-" + i));
+    List<Callable<Reservation>> calls = new ArrayList<>();
+    for (int i = 0; i < 12; i++) {
+      long eq = resource(false, false);
+      String key = "quota-race-" + i;
+      calls.add(() -> {
+        try { return booking.create(owner, input(eq, start, end, key)); }
+        catch (Problem p) { assertThat(p.status()).isEqualTo(409); return null; }
+      });
+    }
+    assertThat(concurrent(calls).stream().filter(Objects::nonNull).count()).isEqualTo(1);
+    assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservation WHERE user_id=?",
+        Integer.class, owner.id())).isEqualTo(50);
+  }
+
+  @Test
+  void concurrentKeyReuseAcrossEquipmentReturnsBusinessConflict() throws Exception {
+    List<Callable<Reservation>> calls = new ArrayList<>();
+    for (int i = 0; i < 10; i++) {
+      long eq = resource(false, false);
+      calls.add(() -> {
+        try { return booking.create(owner, input(eq, start, end, "cross-equipment-key")); }
+        catch (Problem p) { assertThat(p.status()).isEqualTo(409); return null; }
+      });
+    }
+    assertThat(concurrent(calls).stream().filter(Objects::nonNull).count()).isEqualTo(1);
+    assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservation", Integer.class)).isEqualTo(1);
+  }
+
+  @Test
+  void httpErrorsAndScheduleBoundaryHaveCorrectStatus() throws Exception {
+    String token = auth.login(new Login("owner", "password123")).token();
+    mvc.perform(get("/api/equipment/" + equipment + "/schedule")
+        .header("Authorization", "Bearer " + token)).andExpect(status().isBadRequest());
+    mvc.perform(get("/api/equipment/" + equipment + "/schedule")
+        .param("from", start.toString()).param("to", start.plusDays(7).toString())
+        .header("Authorization", "Bearer " + token)).andExpect(status().isOk());
+    mvc.perform(get("/api/equipment/" + equipment + "/schedule")
+        .param("from", start.toString()).param("to", start.plusDays(7).plusSeconds(1).toString())
+        .header("Authorization", "Bearer " + token)).andExpect(status().isBadRequest());
+    mvc.perform(get("/api/no-such-resource").header("Authorization", "Bearer " + token))
+        .andExpect(status().isNotFound());
+    mvc.perform(delete("/api/reservations").header("Authorization", "Bearer " + token))
+        .andExpect(status().isMethodNotAllowed());
+    mvc.perform(get("/favicon.svg")).andExpect(status().isOk());
+    mvc.perform(get("/favicon.ico")).andExpect(status().isNotFound());
+  }
+
+  @Test
   void partialOverlapIsWaitlisted() {
     create(owner);
     Reservation r =

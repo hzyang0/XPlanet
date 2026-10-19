@@ -9,8 +9,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.*;
 
 /**
- * All resource mutations acquire the equipment row first. Slots are the final DB exclusion
- * constraint.
+ * Creation locks user then equipment; other mutations only lock equipment. No path takes a user
+ * lock after an equipment lock. Slots are the final DB exclusion constraint.
  */
 @Service
 @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -41,7 +41,7 @@ public class BookingService {
   }
 
   public Reservation create(Actor actor, CreateReservation input) {
-    Equipment e = store.equipment(input.equipmentId(), true);
+    store.lockUser(actor.id());
     Optional<Reservation> replay = store.byKey(actor.id(), input.requestKey());
     if (replay.isPresent()) {
       Reservation r = replay.get();
@@ -51,6 +51,7 @@ public class BookingService {
           || !r.purpose().equals(input.purpose().trim())) throw Problem.conflict("同一请求标识不能用于不同预约");
       return r;
     }
+    Equipment e = store.equipment(input.equipmentId(), true);
     LocalDateTime now = now();
     validateTimes(input.startAt(), input.endAt(), now);
     if (!e.enabled()) throw Problem.conflict("设备已停用");

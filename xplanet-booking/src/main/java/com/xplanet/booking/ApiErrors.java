@@ -24,11 +24,30 @@ public class ApiErrors {
     MethodArgumentNotValidException.class,
     HttpMessageNotReadableException.class,
     HandlerMethodValidationException.class,
+    org.springframework.web.bind.ServletRequestBindingException.class,
     jakarta.validation.ConstraintViolationException.class,
     org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class
   })
   ResponseEntity<?> invalid(Exception e) {
     return response(400, "参数格式或长度不正确，请检查输入（时间使用 UTC）");
+  }
+
+  @ExceptionHandler({
+    org.springframework.web.servlet.resource.NoResourceFoundException.class,
+    org.springframework.web.servlet.NoHandlerFoundException.class
+  })
+  ResponseEntity<?> notFound(Exception e) {
+    return response(404, "请求的资源不存在");
+  }
+
+  @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+  ResponseEntity<?> methodNotAllowed(Exception e) {
+    return response(405, "该接口不支持此请求方式");
+  }
+
+  @ExceptionHandler(org.springframework.web.HttpMediaTypeNotSupportedException.class)
+  ResponseEntity<?> unsupportedMedia(Exception e) {
+    return response(415, "请使用 application/json 提交请求");
   }
 
   @ExceptionHandler(DataIntegrityViolationException.class)

@@ -2,7 +2,7 @@
 
 围绕实验室单件设备，实现培训资格、时段预约、审批、候补限时确认、签到使用、超时回收和站内通知。包含可操作的用户 / 管理员工作台与数据库集成测试。
 
-主模块是 **xplanet-booking**，采用 Java 17、Spring Boot 3.5、Spring JDBC、Spring Security 和 Flyway。当前 `main` 仅维护预约平台；旧秒杀系统保留在 `xplanet-seckill` 分支，研究平台保留在 `xplanet-optimization` 分支。预约服务独立运行。
+主模块是 **xplanet-booking**，采用 Java 17、Spring Boot 3.5、Spring JDBC、Spring Security 和 Flyway。当前 `main` 仅维护预约平台，研究平台保留在 `xplanet-optimization` 分支。预约服务独立运行。
 
 ## 快速体验
 
