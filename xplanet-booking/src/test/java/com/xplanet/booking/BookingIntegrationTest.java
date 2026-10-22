@@ -239,6 +239,49 @@ class BookingIntegrationTest {
   }
 
   @Test
+  void offsetTimesUseTheSameUtcSlotsAndIdempotencyPayload() throws Exception {
+    String token = auth.login(new Login("owner", "password123")).token();
+    var body = json.createObjectNode()
+        .put("equipmentId", equipment)
+        .put("startAt", "2026-10-15T10:00:00+08:00")
+        .put("endAt", "2026-10-15T12:00:00+08:00")
+        .put("purpose", "时区验证")
+        .put("requestKey", "offset-time-request");
+    String created = mvc.perform(post("/api/reservations")
+        .header("Authorization", "Bearer " + token)
+        .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.startAt").value("2026-10-15T02:00:00Z"))
+        .andReturn().getResponse().getContentAsString();
+    long id = json.readTree(created).get("id").asLong();
+    body.put("startAt", "2026-10-15T02:00:00Z").put("endAt", "2026-10-15T04:00:00Z");
+    mvc.perform(post("/api/reservations").header("Authorization", "Bearer " + token)
+        .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(id));
+    mvc.perform(get("/api/equipment/" + equipment + "/schedule")
+        .header("Authorization", "Bearer " + token)
+        .param("from", "2026-10-15T10:00:00+08:00")
+        .param("to", "2026-10-15T12:00:00+08:00"))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(4))
+        .andExpect(jsonPath("$[0].slot_at").value("2026-10-15T02:00:00Z"));
+    assertThat(booking.create(other, input(equipment, start, end, "same-utc-slots")).status())
+        .isEqualTo(Status.WAITLISTED);
+  }
+
+  @Test
+  void malformedOffsetAndNonStringTimesAreBadRequests() throws Exception {
+    String token = auth.login(new Login("owner", "password123")).token();
+    for (Object bad : List.of("2026-10-15T10:00:00+25:00", 1792029600L)) {
+      var body = json.valueToTree(input(equipment, start, end, "invalid-offset-key"));
+      ((com.fasterxml.jackson.databind.node.ObjectNode) body).set("startAt", json.valueToTree(bad));
+      mvc.perform(post("/api/reservations").header("Authorization", "Bearer " + token)
+          .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+          .andExpect(status().isBadRequest());
+    }
+    assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservation", Long.class)).isZero();
+  }
+
+  @Test
   void partialOverlapIsWaitlisted() {
     create(owner);
     Reservation r =

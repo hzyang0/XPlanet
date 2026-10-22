@@ -6,6 +6,8 @@
 
 主模块是 **xplanet-booking**，采用 Java 17、Spring Boot 3.5、Spring JDBC、Spring Security 和 Flyway。当前 `main` 仅维护预约平台，研究平台保留在 `xplanet-optimization` 分支。预约服务独立运行。
 
+学习与面试从 [完整学习手册](docs/LEARNING-AND-INTERVIEW-HANDBOOK.md) 开始：包含两小时速学/七天路线、源码阅读顺序、并发事务推演、故障矩阵、演示实验和高频追问。
+
 ## 快速体验
 
 需要 JDK 17+。Maven Wrapper 首次运行会下载 Maven 和依赖，需要网络。
@@ -62,6 +64,7 @@ Compose 使用 MySQL 8.4，数据库不映射到宿主端口。云端验证使�
 - 维修停机与预约共用时隙主键，存在有效预约或候补时拒绝安排重叠维修；到期自动释放，管理员也可取消。
 - 已确认、未开始的本人预约可以改期；事务内取消原单并生成关联新单，目标冲突或写入失败则保留原单，审批设备重新审批。
 - API 时间响应明确带 UTC 的 `Z`，例如 `2026-10-20T02:00:00Z`；为兼容既有客户端，无偏移输入继续按 UTC 解释。页面显示浏览器本地时区。
+- JSON 请求和日程查询均支持 `+08:00` 等偏移，并转换到 UTC 后判断时隙和幂等；例如 `10:00+08:00` 与 `02:00Z` 是同一时刻。
 
 ## 关键实现
 
@@ -107,6 +110,7 @@ ADMIN_PASSWORD='<管理员密码>' python scripts/booking_e2e.py \
 - [实际验证记录](docs/BOOKING-VALIDATION.md)
 - [数据库 CI 配置](.github/workflows/booking.yml)
 - [当前项目评估、优化优先级与面试表述](docs/BOOKING-PROJECT-REVIEW.md)
+- [2026-10-21 初步代码评审与本轮改进](docs/PROJECT-REVIEW-20261021.md)
 - [本次本地同步和验证记录](docs/BOOKING-LOCAL-VERIFICATION.md)
 - [按阶段修复与功能改进记录](docs/BOOKING-CHANGES.md)
 

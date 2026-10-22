@@ -2,7 +2,7 @@
 
 ## 请求约定
 
-基础地址 `/api`。登录 / 注册取得 token，其他请求使用 `Authorization: Bearer <token>`。JSON 时间响应统一带 UTC `Z`，例如 `2026-10-20T02:00:00Z`；无偏移输入按 UTC 解释以兼容历史客户端。错误使用真实 HTTP 状态码和 `{"status":409,"message":"原因"}`，包括 400 参数、403 权限、404 资源、405 方法、409 冲突及 415 Content-Type。
+基础地址 `/api`。登录 / 注册取得 token，其他请求使用 `Authorization: Bearer <token>`。JSON 时间响应统一带 UTC `Z`，例如 `2026-10-20T02:00:00Z`；JSON 请求与查询参数中的偏移时间会归一到 UTC，无偏移输入按 UTC 解释以兼容历史客户端。查询参数中的 `+` 请编码为 `%2B`，避免被当成空格。错误使用真实 HTTP 状态码和 `{"status":409,"message":"原因"}`，包括 400 参数、403 权限、404 资源、405 方法、409 冲突及 415 Content-Type。
 
 列表默认 50 条，使用 limit（1～100）和 offset 分页。预约与通知按 ID 倒序，设备按 ID 正序。
 
