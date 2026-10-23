@@ -1,12 +1,20 @@
 name: Booking verification
 on:
   push:
-    paths: ['xplanet-booking/**', 'pom.xml', 'scripts/booking_*', '.github/workflows/booking.yml']
+    paths: ['xplanet-booking/**', 'miniprogram/**', 'pom.xml', 'scripts/booking_*', '.github/workflows/booking.yml']
   pull_request:
-    paths: ['xplanet-booking/**', 'pom.xml', 'scripts/booking_*', '.github/workflows/booking.yml']
+    paths: ['xplanet-booking/**', 'miniprogram/**', 'pom.xml', 'scripts/booking_*', '.github/workflows/booking.yml']
 permissions:
   contents: read
 jobs:
+  mini-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Client logic in UTC and China timezone
+        run: |
+          TZ=UTC node --test miniprogram/tests/client.test.cjs
+          TZ=Asia/Shanghai node --test miniprogram/tests/client.test.cjs
   database-tests:
     runs-on: ubuntu-latest
     strategy:

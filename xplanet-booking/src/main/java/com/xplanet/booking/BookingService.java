@@ -253,6 +253,14 @@ public class BookingService {
         || !now.isBefore(r.startAt().plusMinutes(noShowMinutes))
         || !now.isBefore(r.endAt()))
       throw Problem.conflict("请在开始前 " + earlyMinutes + " 分钟至开始后 " + noShowMinutes + " 分钟内签到");
+    // The scheduler may be delayed. Reconcile expired usage while holding the
+    // same equipment lock, before deciding whether the next user can check in.
+    for (Reservation previous : store.active(r.equipmentId())) {
+      if (previous.id() != r.id()
+          && previous.status() == Status.IN_USE
+          && !previous.endAt().isAfter(now))
+        change(previous, Status.COMPLETED, null, null, "到期自动完成", now);
+    }
     if (store.active(r.equipmentId()).stream()
         .anyMatch(x -> x.id() != r.id() && x.status() == Status.IN_USE))
       throw Problem.conflict("上一预约仍在使用，请稍后签到");

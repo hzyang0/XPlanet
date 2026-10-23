@@ -1,0 +1,31 @@
+{
+  "pages": [
+    "pages/login/login",
+    "pages/equipment/equipment",
+    "pages/book/book",
+    "pages/reservations/reservations",
+    "pages/inbox/inbox"
+  ],
+  "window": {
+    "navigationBarTitleText": "实验设备预约",
+    "navigationBarBackgroundColor": "#164e63",
+    "navigationBarTextStyle": "white"
+  },
+  "tabBar": {
+    "list": [
+      {
+        "pagePath": "pages/equipment/equipment",
+        "text": "设备"
+      },
+      {
+        "pagePath": "pages/reservations/reservations",
+        "text": "预约"
+      },
+      {
+        "pagePath": "pages/inbox/inbox",
+        "text": "通知"
+      }
+    ]
+  },
+  "style": "v2"
+}

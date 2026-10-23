@@ -451,6 +451,21 @@ class BookingIntegrationTest {
   }
 
   @Test
+  void nextCheckInReconcilesExpiredUsageWithoutWaitingForScheduler() {
+    Reservation first = create(owner);
+    Reservation next = booking.create(other,
+        input(equipment, end, end.plusHours(1), UUID.randomUUID().toString()));
+    moveTo(start);
+    booking.checkIn(owner, first.id());
+    moveTo(end.minusMinutes(5));
+    conflict(() -> booking.checkIn(other, next.id()));
+    assertThat(store.reservation(first.id()).status()).isEqualTo(Status.IN_USE);
+    moveTo(end);
+    assertThat(booking.checkIn(other, next.id()).status()).isEqualTo(Status.IN_USE);
+    assertThat(store.reservation(first.id()).status()).isEqualTo(Status.COMPLETED);
+  }
+
+  @Test
   void inUseEquipmentCannotBeStopped() {
     Reservation a = create(owner);
     moveTo(start);

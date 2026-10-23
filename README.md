@@ -117,3 +117,10 @@ ADMIN_PASSWORD='<管理员密码>' python scripts/booking_e2e.py \
 ## 项目边界
 
 设备状态由软件签到和任务维护，未接入硬件控制或学校认证系统。公开部署前需配置 HTTPS、备份、网关限流与正式账号管理。demo 密码只用于本地体验。
+
+## 微信小程序与完整学习路径
+
+- [详细学习与面试手册](docs/LEARNING-AND-INTERVIEW-HANDBOOK.md)
+- [小程序导入、模拟用户联调、源码与发布说明](docs/MINIPROGRAM-GUIDE.md)
+
+原生客户端位于 `miniprogram/`，复用现有后端；尚需微信开发者工具和真机验收及自有 AppID 才能发布。
