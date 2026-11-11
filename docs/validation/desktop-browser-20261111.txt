@@ -1,0 +1,2 @@
+{"login":"passed","reschedule":"passed","cancel":"passed","maintenance":"passed","calendar":"passed","operations":"passed","mobile":"not_requested","javascriptErrors":[]}
+PASS desktop 1440px: late prior-user HTTP isolation, refresh restores session, no JS errors

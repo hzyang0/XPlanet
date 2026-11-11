@@ -8,11 +8,13 @@ let toastTimer;
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6500);}
 async function run(fn){try{await fn();}catch(e){toast(e.message||'请求失败');}}
 async function api(path,method='GET',body){
+ const requestToken=state.token;
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
  try{
   const headers={'Content-Type':'application/json'};if(state.token)headers.Authorization='Bearer '+state.token;
   const response=await fetch('/api'+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),signal:controller.signal});
   const data=await response.json();
+  if(state.token!==requestToken)throw new Error('会话已切换，已忽略旧请求结果');
   if(!response.ok){if(response.status===401&&!path.startsWith('/auth/'))resetAuth();throw new Error(data.message||'请求失败');}return data;
  }catch(e){if(e.name==='AbortError')throw new Error('请求超时。再次提交预约会复用原请求标识，请勿更改内容后盲目重试。');throw e;}
  finally{clearTimeout(timer);}

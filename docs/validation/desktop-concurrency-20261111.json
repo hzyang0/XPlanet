@@ -1,0 +1,14 @@
+{
+  "users": 32,
+  "instances": 2,
+  "confirmed": 1,
+  "waitlisted": 31,
+  "idempotent_replays": 32,
+  "fifo_promotion": "passed",
+  "ownership_check": "passed",
+  "occupied_slots": 2,
+  "submission_batch_seconds": 0.352,
+  "latency_p50_ms": 123.82,
+  "latency_p95_ms": 195.0,
+  "note": "Functional concurrency sample; not a production throughput benchmark."
+}

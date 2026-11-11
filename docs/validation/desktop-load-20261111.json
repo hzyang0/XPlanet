@@ -1,0 +1,19 @@
+{
+  "seconds": 5.074,
+  "workers": 8,
+  "equipment": 2,
+  "instances": 2,
+  "submissions": 281,
+  "completed_cycles": 281,
+  "confirmed": 31,
+  "waitlisted": 250,
+  "idempotent_replays": 32,
+  "submission_requests_per_second": 55.38,
+  "submit_p50_ms": 61.0,
+  "submit_p95_ms": 109.15,
+  "submit_p99_ms": 200.96,
+  "errors": [],
+  "slots_released": true,
+  "fixture_prefix": "load_fe3fd91a",
+  "scope": "local bounded create/replay/cancel HTTP cycles; not maximum throughput or long-running soak"
+}

@@ -1,4 +1,4 @@
-async (page) => {
+async (page, {mobile=true} = {}) => {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.evaluate(() => { window.confirm = () => true; });
@@ -66,10 +66,10 @@ async (page) => {
   await page.locator('#maintenance-list .notice').filter({hasText:reason}).getByRole('button',{name:'取消停机'}).click();
   await page.locator('#maintenance-list .notice').filter({hasText:reason}).waitFor({state:'hidden'});
   await logout();
-  await page.setViewportSize({width:390,height:844});
-  check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Mobile horizontal overflow');
+  if(mobile) await page.setViewportSize({width:390,height:844});
+  if(mobile) check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Mobile horizontal overflow');
   check(errors.length===0, errors.join('; '));
-  const result = {login:'passed',reschedule:'passed',cancel:'passed',maintenance:'passed',calendar:'passed',operations:'passed',mobile:'passed',javascriptErrors:errors};
+  const result = {login:'passed',reschedule:'passed',cancel:'passed',maintenance:'passed',calendar:'passed',operations:'passed',mobile:mobile?'passed':'not_requested',javascriptErrors:errors};
   await page.evaluate(value => { window.bookingVerification = value; }, result);
   return result;
 }
