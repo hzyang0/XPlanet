@@ -124,3 +124,5 @@ ADMIN_PASSWORD='<管理员密码>' python scripts/booking_e2e.py \
 - [小程序导入、模拟用户联调、源码与发布说明](docs/MINIPROGRAM-GUIDE.md)
 
 原生客户端位于 `miniprogram/`，复用现有后端；尚需微信开发者工具和真机验收及自有 AppID 才能发布。
+
+最新：[模拟用户、双实例竞争与实际故障恢复报告](docs/SIMULATION-20261111.md)。
