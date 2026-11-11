@@ -1,0 +1,873 @@
+# XPlanet 离线精读：业务、源码、并发与面试追问
+
+版本依据：`f04d753`，整理日期：2026-11-11。
+
+本文面向无法在本机运行项目的读者，不含环境搭建、启动或部署指令。重要实现直接摘录当前源码，并在代码后解释执行过程、设计依据、边界及面试追问。可以只阅读本文件完成主线学习；源码位置用于之后核对。
+
+阅读目标是形成可解释的项目知识，不能保证覆盖所有面试题；尤其不要把文档中的扩展方案说成已经实现。
+
+- [1. 先建立整体认识：这个项目解决什么问题](#chapter-1)
+- [2. 不运行也能读懂的整体架构](#chapter-2)
+- [3. 用一条完整故事串起业务](#chapter-3)
+- [4. 数据模型：三张核心表与数据库不变量](#chapter-4)
+- [5. 时间区间如何变成唯一键](#chapter-5)
+- [6. 创建预约的真实入口与事务边界](#chapter-6)
+- [7. 锁、隔离级别、唯一约束各自保护什么](#chapter-7)
+- [8. 状态机：每个状态到底意味着什么](#chapter-8)
+- [9. 候补算法：如何避免插队，又允许无冲突任务前进](#chapter-9)
+- [10. 调度、到期、重复执行与多实例](#chapter-10)
+- [11. 取消、审批、资格撤销、维修与改期](#chapter-11)
+- [12. 签到与物理设备：时间正确不等于设备已空闲](#chapter-12)
+- [13. Outbox：业务与通知怎样避免两次写入不一致](#chapter-13)
+- [14. 认证、授权与常见安全追问](#chapter-14)
+- [15. UTC、桌面弱网与账号切换的真实修复](#chapter-15)
+- [16. 你需要理解的测试证据与排障顺序](#chapter-16)
+- [17. 面试开场、分层回答与深度追问](#chapter-17)
+- [18. 白板练习、迁移题与最终自检](#chapter-18)
+
+
+<a id="chapter-1"></a>
+
+## 1. 先建立整体认识：这个项目解决什么问题
+
+XPlanet 是实验室设备预约与资源调度平台，当前学习范围是电脑浏览器工作台与 Java 后端。普通用户查设备、查占用、申请预约、候补、确认补位、签到和结束；管理员维护设备、培训资格、审批、维修时段和失败通知。微信相关实现不作为本文学习重点。
+
+它管理的是“某台设备的一段使用权”，不是简单的库存数字。同一台设备不同时间可以被不同用户使用；预约还受培训资格、审批、设备开放和维护规则约束。
+
+**一句话介绍：**我实现了实验设备预约平台，以半小时槽的数据库唯一约束保证时间排他，用数据库行锁串行化同设备状态变更，通过事务维护预约、候补、审计和 Outbox，并用多实例竞争与实际进程重启验证关键路径。
+
+**名词先记住：**资源是设备；预约是使用权申请；槽是排他占用凭证；候补只表示排队；OFFERED 是临时保留并等待用户确认；Outbox 是待投递事件表，不是 MQ。
+
+**别把项目介绍成：**秒杀系统换皮、无限吞吐调度、任意时间区间预约、已接入外部消息队列。当前代码是固定半小时粒度，同设备写入串行，通知是同库站内信。
+
+
+<a id="chapter-2"></a>
+
+## 2. 不运行也能读懂的整体架构
+
+```text
+电脑浏览器：index.html / app.js / app.css
+  → SecurityConfig：从 Bearer token 解析用户
+  → ApiController：接收参数、绑定 Actor、校验输入
+  → BookingService：事务、锁、规则、状态转换
+  → Store：JDBC SQL
+  → MySQL 或 H2：设备 / 预约 / 槽 / 审计 / Outbox
+
+Maintenance 定时触发 → BookingService.sweep：清理到期与候补补位
+Maintenance 定时触发 → OutboxDispatcher → OutboxDelivery → 站内信
+```
+
+技术栈是 Spring Boot、Spring Security、Spring JDBC、Flyway、MySQL/H2。Spring JDBC 直接执行 SQL，不能答成 JPA 自动生成 SQL。服务端会话落数据库，不能答成 JWT 无状态认证。没有用 Redis 分布式锁来保护设备。
+
+读类的顺序：`Models → Store → BookingService → ApiController → Maintenance → OutboxDelivery → AuthService → app.js`。模型说明有哪些事实；Store 说明事实怎么读写；Service 说明哪些事实必须一起变化。
+
+一个业务操作可能执行很多 SQL，但只要被同一事务包住，对外就应该只看到提交前或提交后的状态。事务的一致性依赖业务条件、锁和约束共同维护，写一个注解不会自动保证规则正确。
+
+
+### 先补齐阅读源码需要的基础概念
+
+- `record` 是一组不可变的数据字段载体，适合请求／响应；它不是数据库 ORM 实体。
+- `@RestController` 将方法返回值序列化为 JSON；`@PostMapping` 把 URL 与写操作映射到方法。
+- `@RequestBody` 读取 JSON，`@Valid` 触发参数模型的字段校验；字段格式合格不代表设备可预约，业务规则仍在 Service。
+- `@AuthenticationPrincipal` 取 Security 已解析的真实 Actor，不接受客户端自报“我是管理员”。
+- `@Service` 注册业务 Bean；通过 Spring 代理调用才能触发事务拦截。
+- JDBC 的 `?` 是值占位符；update 返回影响行数，query 返回记录；SQL 需要开发者明确维护。
+- 事务是同一数据库连接上若干读写的原子提交范围；提交前失败回滚。回滚不能撤回已经发往外部的短信，所以通知先写 Outbox。
+- 行锁通常持有到事务结束；查询到一个 Java 对象，不等于拿到了数据库锁。
+
+Controller 的创建入口如下，它没有收 userId 或 role 来替代真实登录身份：
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/ApiController.java`，起始行 126（连续原文节选，未改写）。
+
+```java
+  @PostMapping("/reservations")
+  public Reservation create(
+      @AuthenticationPrincipal Actor actor, @Valid @RequestBody CreateReservation input) {
+    return booking.create(actor, input);
+  }
+```
+
+这里 input 提供设备、时间、用途和请求标识；actor 来自认证。booking.create 才开启和执行业务事务。这样的分工便于测试 Service，也避免在 HTTP 层分散关键锁规则。
+
+### 离线跟读时怎样判断“理解了”
+
+每读一个函数都写五项：输入、当前事实、前置条件、一起提交的写入、失败后保留什么。不要只抄“使用 Spring Boot + MySQL”。例如 create 的失败不应留下半套槽；reschedule 的失败应保留旧预约；通知失败应保留可重试事件。
+
+<a id="chapter-3"></a>
+
+## 3. 用一条完整故事串起业务
+
+假设“示波器 A”不要求审批，甲、乙均已培训，申请明天 14:00—16:00。
+
+1. 甲提交 requestKey=A1。后台锁甲，再锁设备，检查规则，插入 CONFIRMED，并插入 14:00、14:30、15:00、15:30 四个槽；写审计和事件后提交。
+2. 乙提交 B1。后台发现槽占用，创建 WAITLISTED，不插槽。乙没有设备使用权。
+3. 甲取消。事务将甲变为 CANCELLED、删除槽、扫描队列，给乙分配四槽并变为 OFFERED；不是立即默认乙接受。
+4. 乙在限时内确认。普通设备变 CONFIRMED；审批设备变 PENDING_APPROVAL，仍占槽。
+5. 乙在允许窗口签到，变 IN_USE。结束使用后变 COMPLETED，释放槽，并尝试推进后续候补。
+6. 每个状态变化都有 audit 和 Outbox；通知稍后到达，不反向决定预约事实。
+
+设备要求审批时，甲的首次提交就是 PENDING_APPROVAL；它必须占槽，否则管理员批准前，其他人可能拿走同一时间。审批超时释放槽，避免无限锁住资源。
+
+这个故事可以按“收到什么 → 锁什么 → 检查什么 → 修改什么 → 失败怎么办”的顺序讲完。后面的代码都挂到这条线上。
+
+
+<a id="chapter-4"></a>
+
+## 4. 数据模型：三张核心表与数据库不变量
+
+把预约记录和占用凭证分开理解：reservation 保存用户申请与状态；reservation_slot 保存当前排他占用；历史预约终结后还留着，但对应槽被删除。
+
+主要关系：app_user 1:N reservation；equipment 1:N reservation；reservation 1:N reservation_slot；qualification 是用户与设备的多对多资格；reservation_audit 记录状态历史；event_outbox 到 inbox_notification 是事件到站内信。
+
+下面是最初迁移中的预约与槽结构。后续 V3 让槽既可以归预约，也可以归维修，不能只看 V1 就推断最终表结构。
+
+
+源码：`xplanet-booking/src/main/resources/db/migration/V1__booking.sql`，起始行 35（连续原文节选，未改写）。
+
+```sql
+CREATE TABLE reservation (
+ id BIGINT AUTO_INCREMENT PRIMARY KEY,
+ equipment_id BIGINT NOT NULL,
+ user_id BIGINT NOT NULL,
+ request_key VARCHAR(64) NOT NULL,
+ start_at DATETIME(6) NOT NULL,
+ end_at DATETIME(6) NOT NULL,
+ purpose VARCHAR(300) NOT NULL,
+ status VARCHAR(24) NOT NULL,
+ deadline DATETIME(6),
+ created_at DATETIME(6) NOT NULL,
+ updated_at DATETIME(6) NOT NULL,
+ UNIQUE(user_id,request_key),
+ CHECK (start_at < end_at),
+ CHECK (status IN ('WAITLISTED','OFFERED','PENDING_APPROVAL','CONFIRMED','IN_USE','COMPLETED','CANCELLED','REJECTED','EXPIRED','NO_SHOW')),
+ FOREIGN KEY(equipment_id) REFERENCES equipment(id),
+ FOREIGN KEY(user_id) REFERENCES app_user(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE INDEX idx_reservation_resource ON reservation(equipment_id,status,start_at,end_at);
+CREATE INDEX idx_reservation_user ON reservation(user_id,id);
+CREATE INDEX idx_reservation_deadline ON reservation(status,deadline);
+CREATE TABLE reservation_slot (
+ equipment_id BIGINT NOT NULL,
+ slot_at DATETIME(6) NOT NULL,
+ reservation_id BIGINT NOT NULL,
+ PRIMARY KEY(equipment_id,slot_at),
+ FOREIGN KEY(equipment_id) REFERENCES equipment(id),
+ FOREIGN KEY(reservation_id) REFERENCES reservation(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE INDEX idx_slot_reservation ON reservation_slot(reservation_id);
+```
+
+
+逐项理解：
+
+- `UNIQUE(user_id,request_key)`：同一个用户的一次业务请求只能落一条预约，保护幂等身份。
+- `PRIMARY KEY(equipment_id,slot_at)`：设备某一槽最多一条占用，保护资源排他。它和幂等唯一键解决不同问题。
+- `CHECK(start_at < end_at)`：避免反向区间；未来窗口、培训等动态规则由服务层判断。
+- `idx_reservation_resource(equipment_id,status,start_at,end_at)`：帮助筛选某设备的活动预约；不是任意区间不重叠约束。
+- `idx_slot_reservation`：取消时按 reservation_id 删除槽，减少全表扫描。
+- 外键约束归属存在，不等于验证业务资格。例如存在 user_id 并不意味着用户培训合格。
+
+最终 V3 将 reservation_id 改为可空并加入 block_id，以 CHECK 保证两者恰有一个非空；设备维修和预约共用同一排他主键。这比两张互不约束的占用表更不容易漏掉交叉冲突。
+
+**深问：为什么不用一条预约表唯一键？** `(equipment_id,start_at,end_at)` 只能阻止完全相同的区间，不能阻止 14—16 与 15—17。固定槽把“区间相交”转成有限键集合相交。
+
+
+<a id="chapter-5"></a>
+
+## 5. 时间区间如何变成唯一键
+
+系统采用左闭右开区间 `[start,end)`。14:00—16:00 和 16:00—17:00 不冲突；前者不包含 16:00。
+
+两区间相交条件：`old.start < new.end && old.end > new.start`。严格小于／大于非常重要；改成 <= 会把相邻预约误判冲突。
+
+半小时粒度使 0.5～8 小时预约最多生成 16 个槽。每次提交写入的槽数量有限，便于事务回滚与唯一约束兜底。起止必须都对齐整点或半点，秒和纳秒必须为 0。
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/Store.java`，起始行 172（连续原文节选，未改写）。
+
+```java
+  boolean slotsFree(long equipmentId, LocalDateTime start, LocalDateTime end) {
+    return jdbc.queryForObject(
+            "SELECT COUNT(*) FROM reservation_slot WHERE equipment_id=? AND slot_at>=? AND"
+                + " slot_at<?",
+            Integer.class,
+            equipmentId,
+            start,
+            end)
+        == 0;
+  }
+```
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/Store.java`，起始行 203（连续原文节选，未改写）。
+
+```java
+  void allocate(Reservation r) {
+    for (LocalDateTime t = r.startAt(); t.isBefore(r.endAt()); t = t.plusMinutes(30))
+      jdbc.update(
+          "INSERT INTO reservation_slot(equipment_id,slot_at,reservation_id) VALUES(?,?,?)",
+          r.equipmentId(),
+          t,
+          r.id());
+  }
+
+  void release(long id) {
+    jdbc.update("DELETE FROM reservation_slot WHERE reservation_id=?", id);
+  }
+```
+
+
+`slotsFree` 只是当前事务读取到的判断，不是独立并发保障。两个线程都可能在无锁情况下读到 0。因此需要先获得设备行锁，再检查和写入；主键作为最终防线。
+
+`allocate` 用 `< end` 对应左闭右开。第三个槽插入失败时，前两个不能残留：外层事务回滚整个操作。`release` 按预约 ID 删除凭证，不删除预约历史。
+
+**追问：未来要 5 分钟粒度呢？** 算法相同，但每个 8 小时预约变成 96 行，写入、索引和维护成本增加。若要任意区间，可以比较数据库支持的范围排他约束，或保留设备锁后执行相交查询；当前没有实现第二套任意区间方案，也没有两方案吞吐对比证据。
+
+
+<a id="chapter-6"></a>
+
+## 6. 创建预约的真实入口与事务边界
+
+类级别 `@Transactional(isolation = READ_COMMITTED)` 让经 Spring 代理进入的 public 方法使用事务。Controller 不应在事务外先做一套决定性“无冲突”判断，再调用只负责 insert 的 Service；检查与写入需要同一锁与事务。
+
+下面先看创建前半段：锁用户、查幂等、锁设备，然后验证规则。
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/BookingService.java`，起始行 43（连续原文节选，未改写）。
+
+```java
+  public Reservation create(Actor actor, CreateReservation input) {
+    store.lockUser(actor.id());
+    Optional<Reservation> replay = store.byKey(actor.id(), input.requestKey());
+    if (replay.isPresent()) {
+      Reservation r = replay.get();
+      if (r.equipmentId() != input.equipmentId()
+          || !r.startAt().equals(input.startAt())
+          || !r.endAt().equals(input.endAt())
+          || !r.purpose().equals(input.purpose().trim())) throw Problem.conflict("同一请求标识不能用于不同预约");
+      return r;
+    }
+    Equipment e = store.equipment(input.equipmentId(), true);
+    LocalDateTime now = now();
+    validateTimes(input.startAt(), input.endAt(), now);
+    if (!e.enabled()) throw Problem.conflict("设备已停用");
+    if (e.trainingRequired() && !store.trained(actor.id(), e.id()))
+      throw new Problem(403, "请先获得本设备的培训资格");
+```
+
+
+1. 用户锁先于幂等查询：同一用户重复点击及跨设备并发申请先排队，防止重复请求都读到“不存在”，也保护跨设备的活动预约配额。
+2. 幂等重放提前返回：已经创建的预约，即使时间后来已过去，也应能查询原结果；不能先验证“必须未来”再重放。
+3. 同键必须同业务内容：设备、起止和 trim 后用途不相同，返回 409。不能拿旧键提交新请求。
+4. 设备行锁是后续活动状态修改的串行入口；它不是 Java 对象锁，而是数据库事务持有的锁。
+5. Clock 注入使“当前时间”可以在测试中推进，不必真实等半小时验证超时。
+
+源码后续维护旧状态、检查维修重叠、拒绝本人同设备重叠预约或候补，并检查未完成总数不超过 50。用户锁让“计数后插入”在同一用户的创建路径中可串行执行；取消会减少计数，不破坏上限。
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/BookingService.java`，起始行 74（连续原文节选，未改写）。
+
+```java
+    boolean olderWaiting =
+        store.active(e.id()).stream()
+            .anyMatch(
+                r -> r.status() == Status.WAITLISTED && overlap(r, input.startAt(), input.endAt()));
+    Status status =
+        (!olderWaiting && store.slotsFree(e.id(), input.startAt(), input.endAt()))
+            ? (e.approvalRequired() ? Status.PENDING_APPROVAL : Status.CONFIRMED)
+            : Status.WAITLISTED;
+    LocalDateTime deadline =
+        status == Status.PENDING_APPROVAL
+            ? min(now.plusMinutes(approvalMinutes), input.startAt())
+            : null;
+    long id =
+        store.insert(
+            "INSERT INTO"
+                + " reservation(equipment_id,user_id,request_key,start_at,end_at,purpose,status,deadline,created_at,updated_at)"
+                + " VALUES(?,?,?,?,?,?,?,?,?,?)",
+            e.id(),
+            actor.id(),
+            input.requestKey(),
+            input.startAt(),
+            input.endAt(),
+            input.purpose().trim(),
+            status.name(),
+            deadline,
+            now,
+            now);
+    Reservation r = store.reservation(id);
+    if (status.holdsSlots()) store.allocate(r);
+    store.audit(
+        r, null, actor.id(), status == Status.WAITLISTED ? "时段被占用，进入先进先出候补队列" : "提交预约", now);
+    return r;
+  }
+```
+
+
+`olderWaiting` 防止后来新请求绕过重叠的老候补。只有不存在重叠老候补且槽空闲，才直接确认或待审批；否则创建 WAITLISTED。
+
+审批 deadline 取“当前时间加审批窗口”与开始时间的较早值，不能等设备开始了还保留审批名额。创建记录后，只有 `holdsSlots()` 状态分配槽，最后 `audit` 同时写状态审计和 Outbox。这个 public 方法返回后由事务代理提交；Java 方法内最后一行 return 不表示那一刻已经完成数据库提交。
+
+**异常路径：**培训不合格 403；参数时间不合法 400；设备停用、本人重叠、幂等冲突等 409；普通他人占用不是报错，而是创建候补。面试不要把所有失败统称“抢不到返回失败”。
+
+
+<a id="chapter-7"></a>
+
+## 7. 锁、隔离级别、唯一约束各自保护什么
+
+| 机制 | 保护对象 | 无法单独解决的事 |
+| --- | --- | --- |
+| 用户行 FOR UPDATE | 同用户创建幂等／配额，改期操作串行 | 不同用户争同设备 |
+| 设备行 FOR UPDATE | 该设备预约、资格、启停、维护与补位 | 外部系统物理设备行为 |
+| 槽主键 | 同设备同半小时的最终排他 | 公平性、审批资格 |
+| READ COMMITTED | 避免脏读，锁后重读最新已提交数据 | 不会自动禁止并发区间冲突 |
+| 状态条件 UPDATE | 只从预期旧状态转移 | 不能代替完整业务规则 |
+| 幂等唯一键 | 同用户同请求不重复创建 | 不同键表达同一业务意图 |
+
+同设备并发：甲锁设备 → 乙等待 → 甲写槽并提交 → 乙获得锁 → 乙查询到新占用并进入候补。不同设备可以并行，不是整个系统一把锁。
+
+锁顺序是用户 → 设备。取消、审批、调度等路径不需要再获取另一个用户锁。改期内部重新调用 create 时会再次碰同一个用户锁，但这个锁已经持有，不构成“先设备再新获取别人的用户锁”。
+
+`lock(id)` 先读取预约得到 equipment_id，锁设备后再读取预约。第二次读取不可省：第一次读取到状态后可能等待很久，期间其他事务已经取消或审批。
+
+**Spring 自调用追问：**同类 `reschedule → create` 不经过新代理，create 注解不会重新拦截；但外层 reschedule 已通过代理开启事务，所以内部 SQL 仍参与该事务。若整个调用来自同类未被代理的入口或手动 new 出对象，就不能假定注解生效。这里是已有事务下复用逻辑，不依赖自调用开启事务。
+
+**为什么不用 synchronized？**单 JVM 有效，多实例互不知情。Maintenance 上的 synchronized 只防本实例重入，多实例正确性来自设备行锁。
+
+**数据库死锁还能发生吗？**不能宣称绝对不会。统一锁顺序降低业务层循环等待，外键、其他事务和未来新增批量路径仍可能带来死锁。遇到死锁需要回滚、观测并针对可重试操作使用有界重试，不能无限重跑。
+
+**热点设备怎么办？**同设备串行是清晰的正确性取舍。先监控锁等待和事务时长，再考虑按设备分片、减少锁内 SQL；拆细为槽锁会引入排序锁多个槽、候补与维护协调等复杂度，不能无代价提高吞吐。
+
+
+<a id="chapter-8"></a>
+
+## 8. 状态机：每个状态到底意味着什么
+
+| 状态 | 占槽 | 含义及主要下一步 |
+| --- | --- | --- |
+| WAITLISTED | 否 | 排队，资源可用后 OFFERED；开始时间到则 EXPIRED |
+| OFFERED | 是 | 限时保留，接受后 CONFIRMED 或 PENDING_APPROVAL；超时 EXPIRED |
+| PENDING_APPROVAL | 是 | 等管理员批准／拒绝；超时 EXPIRED |
+| CONFIRMED | 是 | 已批准，允许窗口内签到；迟到 NO_SHOW |
+| IN_USE | 是 | 已签到；主动结束或到结束时间 COMPLETED |
+| COMPLETED | 否 | 已完成终态 |
+| CANCELLED | 否 | 取消终态 |
+| REJECTED | 否 | 被拒绝终态 |
+| EXPIRED | 否 | 确认／审批／候补机会过期 |
+| NO_SHOW | 否 | 已确认但错过签到窗口 |
+
+当前默认窗口：补位确认 10 分钟、审批 30 分钟、开始前 10 分钟至开始后 15 分钟可签到，15 分钟边界不包含。具体 deadline 还不能晚于预约开始。
+
+同一个按钮不总是幂等：取消 CANCELLED 返回原记录；结束 COMPLETED 返回原记录；接受已经 CONFIRMED 或 PENDING_APPROVAL 返回原记录。审批后的重复 decide 会因为不再是 PENDING_APPROVAL 而冲突。不能泛称“所有状态操作重发都直接成功”。
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/BookingService.java`，起始行 431（连续原文节选，未改写）。
+
+```java
+  private Reservation change(
+      Reservation r,
+      Status next,
+      LocalDateTime deadline,
+      Long actor,
+      String reason,
+      LocalDateTime now) {
+    if (store
+            .jdbc()
+            .update(
+                "UPDATE reservation SET status=?,deadline=?,updated_at=? WHERE id=? AND status=?",
+                next.name(),
+                deadline,
+                now,
+                r.id(),
+                r.status().name())
+        != 1) throw Problem.conflict("预约状态已改变，请刷新");
+    if (!next.holdsSlots()) store.release(r.id());
+    Reservation changed = store.reservation(r.id());
+    store.audit(changed, r.status(), actor, reason, now);
+    return changed;
+  }
+```
+
+
+`WHERE id=? AND status=?` 使更新带上预期前置状态；影响行数必须是 1，否则用业务冲突提示刷新。虽然设备锁已把本设计内的写路径串行化，条件更新仍清晰表达状态转换前提。
+
+状态不再持槽时统一 release，再写审计。由此形成一个局部不变量：“终结状态不得留下占用槽”。状态变化和释放不能拆成两个独立提交，否则失败时会出现已取消但占用没释放。
+
+这里不是通用状态机框架。允许的操作和前置条件在各业务方法内表达，change 负责统一持久化收尾。新增状态时必须同时检查 holdsSlots、terminal、active SQL、超时调度、页面标签、测试和数据库 CHECK。
+
+
+<a id="chapter-9"></a>
+
+## 9. 候补算法：如何避免插队，又允许无冲突任务前进
+
+候补按活动记录的 ID 升序处理。这个顺序是当前设备路径中的持久化先后顺序，不是客户端点击时间，也不是跨设备全局公平队列。
+
+简单“找第一个能塞进去的预约”会导致插队：老候补需要 14—16，但 15—16 尚被占用；新候补只要 14—15。若只检查当前空槽，新候补反复占走 14—15，老候补可能长期凑不齐完整区间。
+
+实现维护两个集合：occupied 代表真实槽占用；blocked 代表较早而本轮尚不能分配的候补区间。新候补既要槽空闲，也不得与 blocked 重叠。无重叠的另一时间段可以继续补位，不因队头任务阻塞整台设备所有未来日期。
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/BookingService.java`，起始行 371（连续原文节选，未改写）。
+
+```java
+    NavigableMap<LocalDateTime, LocalDateTime> blocked = new TreeMap<>();
+    Set<LocalDateTime> occupied = store.occupiedSlots(e.id());
+    Set<Long> qualified = e.trainingRequired() ? store.trainedUsers(e.id()) : Set.of();
+    for (Reservation r : store.active(e.id())) {
+      if (r.status() != Status.WAITLISTED) continue;
+      if (e.trainingRequired() && !qualified.contains(r.userId())) {
+        change(r, Status.REJECTED, null, null, "培训资格失效", now);
+        continue;
+      }
+      boolean free = true;
+      for (LocalDateTime t = r.startAt(); t.isBefore(r.endAt()); t = t.plusMinutes(30))
+        if (occupied.contains(t)) { free = false; break; }
+      if (!blockedOverlap(blocked, r.startAt(), r.endAt()) && free) {
+        store.allocate(r);
+        for (LocalDateTime t = r.startAt(); t.isBefore(r.endAt()); t = t.plusMinutes(30)) occupied.add(t);
+        change(
+            r,
+            Status.OFFERED,
+            min(now.plusMinutes(offerMinutes), r.startAt()),
+            null,
+            "候补获得限时确认资格",
+            now);
+      } else mergeBlocked(blocked, r.startAt(), r.endAt());
+    }
+  }
+
+  private boolean blockedOverlap(NavigableMap<LocalDateTime, LocalDateTime> ranges, LocalDateTime start, LocalDateTime end) {
+    var before = ranges.floorEntry(start);
+    var after = ranges.ceilingEntry(start);
+    return (before != null && before.getValue().isAfter(start)) || (after != null && after.getKey().isBefore(end));
+  }
+
+  private void mergeBlocked(NavigableMap<LocalDateTime, LocalDateTime> ranges, LocalDateTime start, LocalDateTime end) {
+    var before = ranges.floorEntry(start);
+    if (before != null && !before.getValue().isBefore(start)) {
+      start = before.getKey();
+      if (before.getValue().isAfter(end)) end = before.getValue();
+      ranges.remove(before.getKey());
+    }
+    var next = ranges.ceilingEntry(start);
+    while (next != null && !next.getKey().isAfter(end)) {
+      if (next.getValue().isAfter(end)) end = next.getValue();
+      ranges.remove(next.getKey());
+      next = ranges.ceilingEntry(start);
+    }
+    ranges.put(start, end);
+  }
+```
+
+
+按执行次序读：
+
+1. 加载现有 occupied 和培训合格用户，避免每个候补都逐次查询资格。
+2. 不合格候补 REJECTED，不占公平性阻塞区间。
+3. 检查该候补所有槽是否空闲。
+4. 若没有更老被阻塞区间与它重叠，allocate 并把新槽立刻加入内存 occupied，后续候补看得到本事务新分配。
+5. 变 OFFERED，deadline 取当前加 10 分钟与开始时刻的较早值。
+6. 否则将该区间并入 blocked；合并相邻或重叠区间，控制区间数量。
+
+TreeMap 的 floorEntry/ceilingEntry 用于找开始时刻两侧可能冲突的区间；能只看近邻，是因为 mergeBlocked 维护了互不重叠的已合并区间。如果不先维护这个不变量，近邻判断不能随便照搬。
+
+**代价：**这选择重叠区间的先到先得，不最大化短任务吞吐。老长任务会保留未来机会，可能让当前部分空槽闲置。公平和利用率不能同时免费最优。用户优先级、紧急插队、反饥饿策略当前未实现。
+
+**复杂度：**不是整个候补函数都是 O(log n)。槽遍历约 O(n·k)，区间查询为 O(log n)，合并可能遍历被合并区间；数据库多次读取、写槽和审计同样占时间。k 当前最多 16，但候补队列 n 仍可能很长。
+
+
+<a id="chapter-10"></a>
+
+## 10. 调度、到期、重复执行与多实例
+
+后台清理：过期维护释放槽；OFFERED／PENDING_APPROVAL 到 deadline 变 EXPIRED；WAITLISTED 到 start 结束候补；CONFIRMED 超过签到期限变 NO_SHOW；IN_USE 到 end 自动完成。之后再补位。
+
+扫描不是每轮从第一台设备全表处理，而是 Store.dueEquipment 查询到期或有候补的设备，Maintenance 用 cursor 分页，扫到末尾归零。多个实例各有 cursor，可能选到同设备；事务设备锁让同设备清理和补位串行。
+
+`@Scheduled(fixedDelay)` 是本实例上次执行完成后再等待间隔，不是精确业务时间保证。线程繁忙、GC、数据库连接不足都可能推迟。deadline 必须落数据库，处理操作必须再次比较真实时间，不能以“任务还没把状态改过来”为准。
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/Maintenance.java`，起始行 51（连续原文节选，未改写）。
+
+```java
+  @Scheduled(fixedDelayString = "${booking.scheduler-delay-ms:5000}")
+  public synchronized void tick() {
+    long began = System.nanoTime();
+    List<Long> ids = store.dueEquipment(cursor, pageSize, LocalDateTime.now(clock), noShowMinutes);
+    if (ids.isEmpty()) {
+      cursor = 0;
+      ids = store.dueEquipment(cursor, pageSize, LocalDateTime.now(clock), noShowMinutes);
+    }
+    for (long id : ids) {
+      cursor = id;
+      try {
+        booking.sweep(id);
+      } catch (Exception e) {
+        metrics.counter("booking.maintenance.failures").increment();
+        log.error("Equipment maintenance failed: {}", id, e);
+      }
+    }
+    metrics.timer("booking.maintenance.duration").record(System.nanoTime() - began, java.util.concurrent.TimeUnit.NANOSECONDS);
+  }
+```
+
+
+每次调用外部 Bean 的 booking.sweep 建立独立事务。某设备失败只记录并继续，不回滚本批所有设备，也避免一个大事务持有多台设备锁。
+
+**深问：重复调度为什么不重复分配？**第二次持锁读取时，第一次已把 WAITLISTED 改成 OFFERED；循环跳过非 WAITLISTED，槽唯一键再次兜底。不是依赖任务只执行一次。
+
+**边界：**业务操作里的 maintain 可能先做清理，后来又抛异常；默认事务回滚会连清理一起撤销。不要说“失败预约请求也一定顺便完成了清理”。后台 sweep 是独立事务，会继续推动最终清理。
+
+定时扫描不是持久任务队列，游标本身在内存，重启可从头扫描；正确性来自数据库状态和 deadline，而不是必须恢复原游标。
+
+
+<a id="chapter-11"></a>
+
+## 11. 取消、审批、资格撤销、维修与改期
+
+**取消：**先锁设备、验证所有权，只能取消未开始且不在使用／终态的预约。释放槽后同事务 maintain，候补能立刻获得机会。
+
+**审批：**只有管理员；必须 PENDING_APPROVAL 且 deadline 未过。批准保留槽转 CONFIRMED；拒绝释放并补位。批准和超时并发由设备锁及时间复核决定，不能只依赖页面的“待审批”标签。
+
+**设备停用：**需要 expectedVersion，防止管理员覆盖旧页面；正在使用时拒绝停用；否则取消活动预约与候补。版本检查虽在悲观锁内，仍提供“我修改的是哪个版本”的用户意图保护。
+
+**资格撤销：**已有正在使用记录则拒绝撤销；需要培训的设备会取消该用户未完成预约并推动候补。资格在提交和接受补位时检查，不把登录时的缓存资格当唯一事实。
+
+**维修封锁：**未来半小时对齐区间，最长 7 天；有重叠活动预约或候补则拒绝，要求先协调。维修也写 reservation_slot，取消或到期后释放。
+
+**改期：**不是直接 UPDATE 起止时间，而是原预约取消 + 创建替代预约 + 关联记录，同事务提交。当前仅本人、未开始、CONFIRMED 可改；目标与预约、候补、维修任一冲突就失败，保留原预约。
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/BookingService.java`，起始行 144（连续原文节选，未改写）。
+
+```java
+    if (!store.slotsFreeExcept(e.id(), input.startAt(), input.endAt(), old.id())
+        || store.maintenanceOverlap(e.id(), input.startAt(), input.endAt())
+        || store.active(e.id()).stream().anyMatch(r -> r.id() != old.id()
+            && overlap(r, input.startAt(), input.endAt())))
+      throw Problem.conflict("目标时段有预约、候补或维修，原预约保持不变");
+    change(old, Status.CANCELLED, null, actor.id(), "改期：原预约取消", now);
+    Reservation replacement = create(actor, new CreateReservation(e.id(), input.startAt(), input.endAt(),
+        old.purpose(), input.requestKey()));
+    store.jdbc().update("INSERT INTO reservation_reschedule(user_id,request_key,source_id,replacement_id,"
+        + "start_at,end_at,created_at) VALUES(?,?,?,?,?,?,?)", actor.id(), input.requestKey(), old.id(),
+        replacement.id(), input.startAt(), input.endAt(), now);
+    return replacement;
+  }
+```
+
+
+先排除自身旧槽，但不排除其他候补，避免改期插队。所有检查通过后取消旧预约，再 create 新预约；create 会重新读取审批规则，因此需要审批的设备改期后重新待审批。replacement_id 把两条记录关联起来，便于审计和同键重放。
+
+如果 create 中途失败，整个外层事务回滚，所以旧预约不会永久丢失。`reservation_reschedule` 同样记录 user_id + request_key 与 payload，用来在响应丢失后找回替代预约。
+
+为什么不直接“先取消接口，再新建接口”？两个 HTTP 请求之间可能宕机或新时段被抢，用户会失去原预约。为什么不直接改时间？可以设计，但要解决原槽释放、新槽申请、状态审批和历史审计，当前采用替代记录更容易保留业务历史。
+
+
+<a id="chapter-12"></a>
+
+## 12. 签到与物理设备：时间正确不等于设备已空闲
+
+签到窗口是 `[start-10分钟, start+15分钟)`，且必须早于 end。重复签到 IN_USE 可返回当前记录。进入使用前检查其他有效 IN_USE，防止下一人提前十分钟签到时前一人仍在使用。
+
+本项目经历过的边界：前一条已经到结束时间，后台还没扫到，下一人签到会被旧 IN_USE 暂时拦住。现在在同一设备锁内先将已到期的前一使用状态转 COMPLETED，再检查其他占用。
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/BookingService.java`，起始行 247（连续原文节选，未改写）。
+
+```java
+  public Reservation checkIn(Actor actor, long id) {
+    Reservation r = lockOwned(actor, id);
+    LocalDateTime now = now();
+    if (r.status() == Status.IN_USE) return r;
+    require(r, Status.CONFIRMED);
+    if (now.isBefore(r.startAt().minusMinutes(earlyMinutes))
+        || !now.isBefore(r.startAt().plusMinutes(noShowMinutes))
+        || !now.isBefore(r.endAt()))
+      throw Problem.conflict("请在开始前 " + earlyMinutes + " 分钟至开始后 " + noShowMinutes + " 分钟内签到");
+    // The scheduler may be delayed. Reconcile expired usage while holding the
+    // same equipment lock, before deciding whether the next user can check in.
+    for (Reservation previous : store.active(r.equipmentId())) {
+      if (previous.id() != r.id()
+          && previous.status() == Status.IN_USE
+          && !previous.endAt().isAfter(now))
+        change(previous, Status.COMPLETED, null, null, "到期自动完成", now);
+    }
+    if (store.active(r.equipmentId()).stream()
+        .anyMatch(x -> x.id() != r.id() && x.status() == Status.IN_USE))
+      throw Problem.conflict("上一预约仍在使用，请稍后签到");
+    return change(r, Status.IN_USE, null, actor.id(), "签到使用", now);
+  }
+```
+
+
+这段代码体现请求路径与后台调度的协作：后台最终清理，请求也维护自身必须满足的及时性条件。`previous.endAt <= now` 才自动结束；结束前仍阻止抢先签到。
+
+真实实验室有另一层事实：人可能超时占用设备。当前“到期自动完成”是预约系统规则，不是传感器证明。面试可以提出设备遥测、延迟释放、管理员接管和告警；必须说明这些属于扩展方案。别将逻辑排他宣传成物理安全保证。
+
+
+<a id="chapter-13"></a>
+
+## 13. Outbox：业务与通知怎样避免两次写入不一致
+
+如果先提交预约，再发消息，进程可能在两步之间退出，预约成功但用户永远收不到通知。如果先发消息再提交预约，事务可能回滚，用户却收到不存在的成功消息。
+
+本项目采用同库 Outbox：业务事务写预约、槽、审计和待投递事件；另一个事务把事件转成站内信并确认投递。它没有外部 MQ。
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/Store.java`，起始行 216（连续原文节选，未改写）。
+
+```java
+  void audit(Reservation r, Status from, Long actor, String reason, LocalDateTime now) {
+    jdbc.update(
+        "INSERT INTO"
+            + " reservation_audit(reservation_id,from_status,to_status,actor_id,reason,created_at)"
+            + " VALUES(?,?,?,?,?,?)",
+        r.id(),
+        from == null ? null : from.name(),
+        r.status().name(),
+        actor,
+        reason,
+        now);
+    jdbc.update(
+        "INSERT INTO event_outbox(reservation_id,user_id,message,created_at) VALUES(?,?,?,?)",
+        r.id(),
+        r.userId(),
+        "预约 #" + r.id() + " → " + r.status().name() + "：" + reason,
+        now);
+  }
+```
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/OutboxDelivery.java`，起始行 19（连续原文节选，未改写）。
+
+```java
+  @Transactional(isolation = Isolation.READ_COMMITTED)
+  public boolean deliver(long id) {
+    LocalDateTime now = LocalDateTime.now(clock);
+    List<Map<String, Object>> rows = store.rows(
+        "SELECT * FROM event_outbox WHERE id=? AND delivered_at IS NULL AND failed_at IS NULL"
+            + " AND (next_attempt_at IS NULL OR next_attempt_at<=?) FOR UPDATE", id, now);
+    if (rows.isEmpty()) return false;
+    Map<String, Object> event = rows.get(0);
+    if (store.jdbc().queryForObject("SELECT COUNT(*) FROM inbox_notification WHERE event_id=?",
+        Integer.class, id) == 0)
+      store.jdbc().update(
+          "INSERT INTO inbox_notification(event_id,user_id,reservation_id,message,created_at)"
+              + " VALUES(?,?,?,?,?)", id, event.get("user_id"), event.get("reservation_id"),
+          event.get("message"), now);
+    store.jdbc().update("UPDATE event_outbox SET delivered_at=?,last_error=NULL WHERE id=?", now, id);
+    return true;
+  }
+```
+
+
+`deliver` 锁定一条未完成、未隔离且到重试时间的事件。其他实例可能在 dispatch 的扫描中看到相同 ID，但进入 deliver 会在事件行锁上协调。
+
+站内信 `event_id UNIQUE` 是去重键。事件锁、写信和 delivered_at 更新处在同库同事务：若进程在提交前退出，两者都回滚；提交后退出，两者都存在。重复尝试不会产生两条对应站内信。
+
+| 故障位置 | 数据状态 | 恢复 |
+| --- | --- | --- |
+| 预约事务提交前 | 预约与事件都未提交 | 客户端同键重试 |
+| 预约提交后、通知执行前 | 预约和事件存在，信未生成 | 后台继续扫 Outbox |
+| 投递事务写信后、确认前崩溃 | 两者同事务均回滚 | 再投递 |
+| 投递提交后、进程退出 | 信与确认都存在 | 再扫描不重复投递 |
+
+这可以讲“同库站内信效果去重”，不能泛化成外部通知 exactly-once。未来发短信时，短信供应商不与数据库共享事务；发送成功但确认失败仍会重复发送，需要供应商幂等键／对账，或接受至少一次并让接收端去重。
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/OutboxDelivery.java`，起始行 37（连续原文节选，未改写）。
+
+```java
+  @Transactional(isolation = Isolation.READ_COMMITTED)
+  public void recordFailure(long id, String error) {
+    List<Map<String, Object>> rows = store.rows(
+        "SELECT retry_count FROM event_outbox WHERE id=? AND delivered_at IS NULL"
+            + " AND failed_at IS NULL FOR UPDATE", id);
+    if (rows.isEmpty()) return;
+    int count = ((Number) rows.get(0).get("retry_count")).intValue() + 1;
+    LocalDateTime now = LocalDateTime.now(clock);
+    store.jdbc().update(
+        "UPDATE event_outbox SET retry_count=?,next_attempt_at=?,last_error=?,failed_at=? WHERE id=?",
+        count, now.plusSeconds(Math.min(300L, 1L << Math.min(count, 8))),
+        error.substring(0, Math.min(300, error.length())), count >= 5 ? now : null, id);
+  }
+```
+
+
+失败另开事务记录 retry_count、next_attempt_at、last_error；正常路径五次失败后设置 failed_at，进入隔离，不再自动投递。代码退避表达式有上限，但五次隔离意味着正常重试序列先走到 2、4、8、16、32 秒；不要只看到 min(300,...) 就声称每个失败事件都会重试到五分钟。
+
+管理员可重新投递并记录 event_retry_audit。失败积压、最老等待时间、隔离数比“定时任务在跑”的日志更能说明用户是否真正收到通知。
+
+
+<a id="chapter-14"></a>
+
+## 14. 认证、授权与常见安全追问
+
+认证回答“你是谁”，授权回答“你能操作哪条数据”。前端隐藏管理员按钮只是交互，安全必须由后端决定。
+
+登录密码用 BCrypt，适合抗密码猜测；session token 是 32 字节随机数经 URL-safe Base64 编码，数据库只存 SHA-256 摘要并设 12 小时到期。对高熵随机 token 用摘要和对低熵密码用慢哈希是不同设计，不能把 BCrypt 和 SHA-256 随意互换。
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/AuthService.java`，起始行 80（连续原文节选，未改写）。
+
+```java
+  private Session issue(Actor actor) {
+    byte[] bytes = new byte[32];
+    random.nextBytes(bytes);
+    String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    LocalDateTime expires = now().plusHours(12);
+    jdbc.update(
+        "INSERT INTO auth_session(token_hash,user_id,expires_at) VALUES(?,?,?)",
+        hash(token),
+        actor.id(),
+        expires);
+    return new Session(token, actor, expires);
+  }
+
+  public Optional<Actor> resolve(String token) {
+    if (token == null || token.length() != 43) return Optional.empty();
+    return jdbc
+        .query(
+            "SELECT u.id,u.username,u.role FROM auth_session s JOIN app_user u ON u.id=s.user_id"
+                + " WHERE s.token_hash=? AND s.expires_at>?",
+            (r, n) -> new Actor(r.getLong(1), r.getString(2), r.getString(3)),
+            hash(token),
+            now())
+        .stream()
+        .findFirst();
+  }
+```
+
+
+Bearer token 每次由 SecurityConfig 调用 resolve，查当前有效会话和用户；退出删除摘要行可以立即撤销该 token。它是服务端有状态会话。数据库不可用会影响认证，和离线验证签名的 JWT 不同。
+
+Service 的 lockOwned 在获得设备锁后检查本人或管理员；管理员也不能替别人改期，因为 reschedule 单独要求本人。Controller 的预约详情、审计、通知读取同样需要用户范围过滤，不能仅在写接口保护。
+
+SQL 值用参数绑定，LIKE 查询还转义 % 与 _，避免用户输入意外变成通配符。前端用 textContent 创建设备描述和用途，避免把用户文本当 HTML 执行。
+
+登录限流是每实例用户名维度的辅助限制，不是集群网关级防护。密码校验还检查 UTF-8 的 72 字节上限，不能只按 Java 字符数理解 BCrypt 限制。
+
+CSRF 关闭依赖当前显式 Bearer 头模式；未来改成自动携带的 cookie 身份凭证，要重新评估 CSRF、SameSite 与跨域策略，不能把当前配置无条件复制过去。
+
+
+<a id="chapter-15"></a>
+
+## 15. UTC、桌面弱网与账号切换的真实修复
+
+数据库 DATETIME 本身不附时区，本项目约定其中的 LocalDateTime 表示 UTC。接口明确输出 Z，带偏移输入归一化，历史无偏移输入按 UTC 解释。电脑页面 datetime-local 表达本地时间，提交时先构造 Date 再转 UTC。
+
+例如北京时间 14:00 对应 06:00Z；两种表达必须归一化后再比较幂等 payload，否则同一真实时间可能被误判不同请求。
+
+
+源码：`xplanet-booking/src/main/java/com/xplanet/booking/UtcJsonConfig.java`，起始行 20（连续原文节选，未改写）。
+
+```java
+  static LocalDateTime parseUtc(String value) {
+    TemporalAccessor parsed = DateTimeFormatter.ISO_DATE_TIME.parseBest(
+        value, OffsetDateTime::from, LocalDateTime::from);
+    return parsed instanceof OffsetDateTime offset
+        ? offset.withOffsetSameInstant(ZoneOffset.UTC).toLocalDateTime()
+        : LocalDateTime.from(parsed);
+  }
+```
+
+
+源码：`xplanet-booking/src/main/resources/static/app.js`，起始行 10（连续原文节选，未改写）。
+
+```javascript
+async function api(path,method='GET',body){
+ const requestToken=state.token;
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
+ try{
+  const headers={'Content-Type':'application/json'};if(state.token)headers.Authorization='Bearer '+state.token;
+  const response=await fetch('/api'+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),signal:controller.signal});
+  const data=await response.json();
+  if(state.token!==requestToken)throw new Error('会话已切换，已忽略旧请求结果');
+  if(!response.ok){if(response.status===401&&!path.startsWith('/auth/'))resetAuth();throw new Error(data.message||'请求失败');}return data;
+ }catch(e){if(e.name==='AbortError')throw new Error('请求超时。再次提交预约会复用原请求标识，请勿更改内容后盲目重试。');throw e;}
+ finally{clearTimeout(timer);}
+}
+```
+
+
+桌面测试曾复现：旧用户的通知请求在退出、登录另一个账号之后返回，错误覆盖新页面。现在 api 在发起时捕获 requestToken，收到响应后先比较当前身份，再处理响应或 401。因此旧 401 也不会把新用户踢下线。
+
+弱网另一边界：服务器可能已经提交，但响应丢失。页面相同预约内容复用 requestKey，再次提交找回原预约；用户修改内容才换键。浏览器临时草稿不等于服务器事实，关页或刷新后应先查预约记录，不应盲目重建请求。当前桌面草稿主要保存在页面内存，不能宣称已实现跨刷新完整草稿持久化。
+
+本轮 Playwright 确实把第一次写入送到真实后端，随后丢弃响应，再检查两次请求键相同、数据库可见的预约只有一条。这比只 Mock 一个成功返回更接近故障边界。
+
+
+<a id="chapter-16"></a>
+
+## 16. 你需要理解的测试证据与排障顺序
+
+阅读测试不需要执行命令，关注“安排什么场景、触发什么操作、断言哪个不变量”。
+
+| 已有证据 | 能证明的内容 | 不能证明的内容 |
+| --- | --- | --- |
+| H2 与 MySQL 各 50 项 | 两种数据库下核心事务与规则 | 所有数据库兼容 |
+| 双实例 32 人同槽争用 | 只有一人确认，其他候补 | 任何流量下都正确／可用 |
+| 同键并发、payload 冲突 | 重试不重复创建／错改 | 不同键重复意图自动合并 |
+| 杀进程、真实截止后重启 | 持久 deadline 和事件恢复 | 灾难恢复、跨机房容灾 |
+| 桌面迟到响应与丢失响应 | 身份展示隔离与原键重试 | 真实用户易用性 |
+| 5 秒双实例短负载 281 循环 | 有界竞争与释放无异常 | 最大吞吐、长时间稳定性 |
+
+故障排查按事实层次走：预约状态 → 槽归属 → audit 流转原因 → Outbox 是否积压／隔离 → 站内信 → 前端是否展示当前身份与最新状态。
+
+例：“已取消但别人订不了”先查是否仍有别的预约、维修或 OFFERED，占槽不一定属于被取消记录；不要立即判定 release 失效。例：“没收到通知”先看预约是否提交，再看事件与站内信，而不是重做预约。
+
+资料日期是测试发生时间，不能把短时样本 latency 写成生产 SLA。本文是离线学习资料，不要求你执行这些测试。
+
+
+<a id="chapter-17"></a>
+
+## 17. 面试开场、分层回答与深度追问
+
+**30 秒：**“这是实验室设备预约平台。我的重点是同设备重叠区间的排他和候补调度。我将半小时区间离散成槽，用设备行锁协调检查和状态修改，用数据库主键兜底排他；预约、审计和通知事件在同一事务写入，支持幂等重试和进程恢复。”
+
+**2 分钟：**先说用户／管理员和完整流程；再讲一次预约成功、另一个人候补；接着讲取消补位不是自动接受；最后用双实例竞争和实际重启测试作为证据，并说明固定粒度、同库通知和热点串行边界。
+
+**5 分钟：**在上面基础上，展开一个代码细节：锁后重读、blocked 队列公平性、Outbox 同库投递或原子改期。不要五分钟全在背技术名词。
+
+回答深问采用“当前实现 → 为什么 → 故障反例 → 代价／扩展”四步。下面的问题可直接练习：
+
+1. **两个请求同时查到空闲怎么办？** 当前所有设备写路径先锁同一设备行；后获得锁者重读状态；槽主键防漏网。仅查询空闲不构成互斥。
+2. **只有唯一键不要锁可以吗？** 能阻止重复槽提交，但无法自然协调 FIFO、资格撤销、设备停用和复合状态；多槽冲突后还需要事务回滚与错误语义处理。
+3. **为什么选择 RC？** 在显式行锁和槽约束下能实现目标，锁后读到已提交新状态较直观；不是 RC 比 RR 永远更快，更不是靠 RC 自动防幻读解决冲突。
+4. **RR 下能直接查询区间后插入吗？** 不能随口保证；要分析索引、范围锁和每条 SQL 的锁行为。当前方案不依赖区间查询的隐含间隙锁来实现业务排他。
+5. **数据库锁比 Redis 锁慢怎么办？** 先给出瓶颈数据；数据库是资源事实来源，行锁在本地事务内生命周期清楚。外部锁增加租约、续期、失效及 fencing 问题，也无法替代唯一约束。
+6. **用户一直不确认候补怎么办？** OFFERED 有持久 deadline，到期释放并推进后续；新请求不能绕过重叠老队列。
+7. **一个长候补阻塞所有设备预约吗？** 只阻塞重叠区间，无重叠区间继续；公平和空槽利用率是取舍。
+8. **审批通过与取消同时来？** 同设备锁串行，后执行者检查实际状态；不能仅凭客户端状态决定。取消可以取消已确认但未开始的预约，所以最终状态取决于合法顺序。
+9. **确认补位与过期同时发生？** 获取锁后比较 now 和 deadline；即使调度尚未改 EXPIRED，过期 accept 也拒绝。
+10. **定时任务重复执行？** 已处理记录不再满足状态；状态条件和槽唯一键兜底。任务可能重复，业务效果应可重复检查。
+11. **为什么不是所有终态都删除？** 历史、审计、幂等重放和管理员追踪需要保留。
+12. **改期内部调用 create 的事务失效吗？** 内部不会新开事务，但继承已存在外层事务；要解释代理入口而不是背“自调用一定没有事务”。
+13. **通知是否 exactly-once？** 同库站内信写入和确认原子、event_id 去重；不外推到外部投递。
+14. **重试时传不同用途？** 同键 payload 不同 409；新意图用新键。
+15. **成功后取消，再重放创建请求？** 返回原预约的当前状态，可能 CANCELLED；幂等不是永远重现第一次 JSON 快照。
+16. **如何做批量多设备原子预约？** 尚未实现。可以按设备 ID 排序加锁、同事务分配全部，任一失败回滚；还要定义候补是整批还是分设备，不能只加一个循环。
+17. **规则变更怎么办？** 当前支持启停、培训授权／撤销、设备创建配置；完整规则版本化、已批准预约 grandfathering 尚未实现，需要定义生效范围与审计。
+18. **如何做分库？** 设备作为聚合边界有利分片，但用户总配额和跨设备批量将跨分片，需重新定义一致性；不是加路由就结束。
+19. **最难的 bug 是什么？** 可选桌面旧账号迟到响应或调度滞后签到。说明实际复现时序、根因、修复点和测试，别虚构线上事故。
+20. **性能怎么说明？** 同设备串行保证规则清楚；有短时多实例样本，不声称生产最大吞吐；下一步看锁等待、连接池和候补规模。
+
+不清楚的题可以说：“当前项目没有实现这个扩展，我先说明已实现边界，再给出设计与验证思路。”这比把设想说成源码可靠。
+
+
+<a id="chapter-18"></a>
+
+## 18. 白板练习、迁移题与最终自检
+
+**练习一：画表。**不看文档画 reservation、slot、equipment、qualification、outbox/inbox 的主外键；标出哪两个唯一键分别保护幂等和资源。答案不能把 user_id 放进槽排他主键，否则不同用户可以占同设备同槽。
+
+**练习二：画并发时序。**甲预约、乙预约、管理员停用同时到达。先固定它们都锁相同设备，再任选合法顺序推导结果。管理员停用会取消已生成但未使用记录；设备停用后新创建被拒绝。不要说所有排列的最终通知数量都一样，审计反映实际流转。
+
+**练习三：定位故障。**用户显示已确认，数据库也是 CONFIRMED，但没有通知。先看 Outbox 是否创建，再看 delivered_at / failed_at / retry_count，再看 inbox；不要修改预约状态来“补发通知”。
+
+**练习四：迁移为会议室。**时间槽与审批可以复用；新增容量、多参与者、重复会议和工作日规则；强调当前单资源单占用不直接支持“容量 10 同时多人预约”。
+
+**练习五：缩短陈述。**拿一页纸只写：业务问题、事实来源、两个不变量、锁顺序、候补公平性、故障恢复、证据和限制。能用自己的话展开每个词，才算掌握。
+
+最后应能不看代码回答：谁能预约、何时占槽、什么时候释放、谁发通知、网络失败怎么重试、为何多实例仍排他、哪些情况拒绝、哪几项能力尚未实现。掌握这些后，再将某一模块讲到 SQL 和事务边界，足以应对多数围绕该项目的深入讨论。

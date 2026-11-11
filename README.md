@@ -1,5 +1,7 @@
 # XPlanet · 实验设备预约与资源调度平台
 
+> 无需部署的学习入口：[完整离线学习文档（HTML）](docs/OFFLINE-CODE-AND-INTERVIEW-GUIDE.html) · [Markdown 原文](docs/OFFLINE-CODE-AND-INTERVIEW-GUIDE.md)。包含当前实现、真实源码逐段解释、设计取舍和面试追问，不含启动步骤。
+
 围绕实验室单件设备，实现培训资格、时段预约、审批、候补限时确认、签到使用、超时回收和站内通知。包含可操作的用户 / 管理员工作台与数据库集成测试。
 
 现已支持维修停机日历、本人预约的原子改期、失败通知隔离与管理员重试；本机 47 项 H2 和 47 项 MySQL 集成测试通过。最新验证及短时负载结果见 [本机验证](docs/BOOKING-LOCAL-VERIFICATION.md)。
