@@ -1,5 +1,7 @@
 # XPlanet · 实验设备预约与资源调度平台
 
+> 农行西安研发面试：[三轮面试完整复习指南（离线 HTML）](docs/interview/ABC-XIAN-REVIEW.html) · [Markdown](docs/interview/ABC-XIAN-REVIEW.md)。涵盖技术基础、银行场景、项目追问、编程实操和综合面试。
+
 > 无需部署的学习入口：[完整离线学习文档（HTML）](docs/OFFLINE-CODE-AND-INTERVIEW-GUIDE.html) · [Markdown 原文](docs/OFFLINE-CODE-AND-INTERVIEW-GUIDE.md)。包含当前实现、真实源码逐段解释、设计取舍和面试追问，不含启动步骤。
 
 围绕实验室单件设备，实现培训资格、时段预约、审批、候补限时确认、签到使用、超时回收和站内通知。包含可操作的用户 / 管理员工作台与数据库集成测试。
